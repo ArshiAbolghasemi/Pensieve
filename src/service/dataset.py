@@ -1,7 +1,7 @@
 import logging
 from typing import cast
 
-from datasets import DatasetDict, load_dataset
+from datasets import Dataset, DatasetDict, load_dataset
 from transformers import PreTrainedTokenizerBase
 
 logger = logging.getLogger(__name__)
@@ -24,7 +24,7 @@ def _format_with_chat_template(
 
 def sample_flan_dataset(
     tokenizer: PreTrainedTokenizerBase, samples_per_task: int = 200
-) -> dict:
+) -> dict[str, Dataset]:
     """Load the FLAN dataset and sample a fixed number of examples per task.
 
     Format the dataset for conversational SFT training using a chat template.
