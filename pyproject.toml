@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "Pensive"
+version = "0.1.0"
+authors = [
+    {name = "Arshia Abolghasemi", email = "a.abolghasemi@digikala.com"}
+]
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+
+dependencies = [
+    "torch==2.9.1",
+    "transformers==4.57.3",
+    "datasets==4.4.1",
+    "accelerate==1.12.0",
+    "peft==0.18.0",
+    "tqdm==4.67.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff==0.14.1",
+]
