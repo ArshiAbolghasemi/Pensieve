@@ -85,7 +85,7 @@ def get_tokenizer(*, model_name: str, **kwargs) -> PreTrainedTokenizer:
         tokenizer: Loaded tokenizer instance
 
     """
-    trust_remote_code = kwargs.get("padding_side", True)
+    trust_remote_code = kwargs.get("trust_remote_code", True)
     padding_side = kwargs.get("padding_side", "right")
     add_eos_token = kwargs.get("add_eos_token", True)
     add_bos_token = kwargs.get("add_bos_token", False)
