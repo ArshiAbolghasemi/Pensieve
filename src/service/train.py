@@ -1,115 +1,94 @@
 import torch
+from typing import Optional
 from torch import Tensor
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 from transformers import PreTrainedModel
 
-from config.moe import MoELoRAConfig
-from service.moe import MoELoRAModel
 
-
-def train_moe_lora(
+def train_epoch(
     model: PreTrainedModel,
-    config: MoELoRAConfig,
     train_dataloader: DataLoader,
     optimizer: torch.optim.Optimizer,
-    scheduler: torch.optim.lr_scheduler._LRScheduler | None = None,
-    num_epochs: int = 3,
+    scheduler: Optional[torch.optim.lr_scheduler._LRScheduler] = None,
     gradient_accumulation_steps: int = 1,
     max_grad_norm: float = 1.0,
     logging_steps: int = 10,
     device: str = "cuda",
-) -> PreTrainedModel:
-    """Train MoE LoRA model with proper gradient accumulation and progress tracking.
+    epoch: int = 0,
+    num_epochs: int = 1,
+) -> float:
+    """
+    Train for one epoch.
 
     Args:
-        model: Pretrained model to inject MoE LoRA layers into
-        config: MoE LoRA configuration
+        model: Model to train
         train_dataloader: Training data loader
-        optimizer: Optimizer for training
+        optimizer: Optimizer
         scheduler: Optional learning rate scheduler
-        num_epochs: Number of training epochs
-        gradient_accumulation_steps: Steps to accumulate gradients before update
+        gradient_accumulation_steps: Gradient accumulation steps
         max_grad_norm: Maximum gradient norm for clipping
         logging_steps: Log every N steps
         device: Device to train on
+        epoch: Current epoch number (0-indexed)
+        num_epochs: Total number of epochs
 
     Returns:
-        Trained model
-
+        Average training loss for the epoch
     """
-    moe_model = MoELoRAModel(model, config)
-    moe_model.print_trainable_parameters()
-
-    for param in model.parameters():
-        param.requires_grad = False
-
-    for param in moe_model.get_trainable_parameters():
-        param.requires_grad = True
-
     model.train()
-    global_step = 0
+    total_loss = 0.0
+    num_batches = 0
 
-    for epoch in range(num_epochs):
-        total_loss = 0.0
-        num_batches = 0
+    progress_bar = tqdm(
+        train_dataloader,
+        desc=f"Epoch {epoch + 1}/{num_epochs}",
+        total=len(train_dataloader),
+    )
 
-        progress_bar = tqdm(
-            train_dataloader,
-            desc=f"Epoch {epoch + 1}/{num_epochs}",
-            total=len(train_dataloader),
+    for step, batch in enumerate(progress_bar):
+        input_ids: Tensor = batch["input_ids"].to(device)
+        attention_mask: Tensor = batch["attention_mask"].to(device)
+        labels: Tensor = batch["labels"].to(device)
+
+        outputs = model(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            labels=labels,
         )
 
-        for step, batch in enumerate(progress_bar):
-            input_ids: Tensor = batch["input_ids"].to(device)
-            attention_mask: Tensor = batch["attention_mask"].to(device)
-            labels: Tensor = batch["labels"].to(device)
+        loss: Tensor = outputs.loss
 
-            outputs = model(
-                input_ids=input_ids,
-                attention_mask=attention_mask,
-                labels=labels,
-            )
+        if gradient_accumulation_steps > 1:
+            loss = loss / gradient_accumulation_steps
 
-            loss: Tensor = outputs.loss
+        loss.backward()
 
-            if gradient_accumulation_steps > 1:
-                loss = loss / gradient_accumulation_steps
+        total_loss += loss.item() * gradient_accumulation_steps
+        num_batches += 1
 
-            loss.backward()
+        if (step + 1) % gradient_accumulation_steps == 0:
+            if max_grad_norm > 0:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
 
-            total_loss += loss.item() * gradient_accumulation_steps
-            num_batches += 1
+            optimizer.step()
 
-            if (step + 1) % gradient_accumulation_steps == 0:
-                if max_grad_norm > 0:
-                    torch.nn.utils.clip_grad_norm_(
-                        moe_model.get_trainable_parameters(), max_grad_norm
-                    )
+            if scheduler is not None:
+                scheduler.step()
 
-                optimizer.step()
+            optimizer.zero_grad()
 
-                if scheduler is not None:
-                    scheduler.step()
+            if step % logging_steps == 0:
+                current_lr = optimizer.param_groups[0]["lr"]
+                progress_bar.set_postfix(
+                    {
+                        "loss": f"{loss.item() * gradient_accumulation_steps:.4f}",
+                        "lr": f"{current_lr:.2e}",
+                    }
+                )
 
-                optimizer.zero_grad()
-
-                global_step += 1
-
-                if global_step % logging_steps == 0:
-                    current_lr = optimizer.param_groups[0]["lr"]
-                    progress_bar.set_postfix(
-                        {
-                            "loss": f"{loss.item() * gradient_accumulation_steps:.4f}",
-                            "lr": f"{current_lr:.2e}",
-                            "step": global_step,
-                        }
-                    )
-
-        avg_loss = total_loss / num_batches
-        print(f"Epoch {epoch + 1} completed. Average Loss: {avg_loss:.4f}")
-
-    return model
+    avg_loss = total_loss / num_batches
+    return avg_loss
 
 
 def validate(
@@ -117,7 +96,8 @@ def validate(
     val_dataloader: DataLoader,
     device: str = "cuda",
 ) -> float:
-    """Validate the model and return average loss.
+    """
+    Validate the model and return average loss.
 
     Args:
         model: Model to validate
@@ -126,7 +106,6 @@ def validate(
 
     Returns:
         Average validation loss
-
     """
     model.eval()
     total_loss = 0.0
