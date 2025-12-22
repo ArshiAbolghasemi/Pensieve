@@ -1,3 +1,4 @@
+import logging
 import torch
 from typing import Optional
 from torch import Tensor
@@ -7,6 +8,9 @@ from transformers import PreTrainedModel
 from torch.optim.lr_scheduler import LRScheduler
 
 from service.moe import MoELoRAModel
+
+
+logger = logging.getLogger(__name__)
 
 
 def train_epoch(
@@ -83,7 +87,6 @@ def train_epoch(
         num_batches += 1
 
         if (step + 1) % gradient_accumulation_steps == 0:
-            # Clip gradients
             if max_grad_norm > 0:
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
 
@@ -109,10 +112,10 @@ def train_epoch(
     avg_task_loss = total_task_loss / num_batches
     avg_ortho_loss = total_ortho_loss / num_batches
 
-    print(f"\nEpoch {epoch + 1} Summary:")
-    print(f"  Total Loss: {avg_loss:.4f}")
-    print(f"  Task Loss: {avg_task_loss:.4f}")
-    print(f"  Orthogonal Loss: {avg_ortho_loss:.4f}")
+    logger.info(f"\nEpoch {epoch + 1} Summary:")
+    logger.info(f"  Total Loss: {avg_loss:.4f}")
+    logger.info(f"  Task Loss: {avg_task_loss:.4f}")
+    logger.info(f"  Orthogonal Loss: {avg_ortho_loss:.4f}")
 
     return avg_loss
 
