@@ -19,7 +19,6 @@ def get_model(*, model_name: str, **kwargs) -> PreTrainedModel:
         device_map: Device mapping strategy
         trust_remote_code: Whether to trust remote code
         torch_dtype: Data type for model weights
-        use_flash_attention: Whether to use flash attention (if supported)
 
     Returns:
         model: Loaded model instance
