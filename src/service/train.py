@@ -4,31 +4,38 @@ from torch import Tensor
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 from transformers import PreTrainedModel
+from torch.optim.lr_scheduler import LRScheduler
+
+from service.moe import MoELoRAModel
 
 
 def train_epoch(
     model: PreTrainedModel,
+    moe_model: MoELoRAModel,
     train_dataloader: DataLoader,
     optimizer: torch.optim.Optimizer,
-    scheduler: Optional[torch.optim.lr_scheduler._LRScheduler] = None,
+    scheduler: Optional[LRScheduler] = None,
     gradient_accumulation_steps: int = 1,
     max_grad_norm: float = 1.0,
     logging_steps: int = 10,
+    orthogonal_loss_weight: float = 0.01,
     device: str = "cuda",
     epoch: int = 0,
     num_epochs: int = 1,
 ) -> float:
     """
-    Train for one epoch.
+    Train for one epoch with orthogonal regularization for router.
 
     Args:
         model: Model to train
+        moe_model: MoE model wrapper for accessing layers
         train_dataloader: Training data loader
         optimizer: Optimizer
         scheduler: Optional learning rate scheduler
         gradient_accumulation_steps: Gradient accumulation steps
         max_grad_norm: Maximum gradient norm for clipping
         logging_steps: Log every N steps
+        orthogonal_loss_weight: Weight for orthogonal regularization loss
         device: Device to train on
         epoch: Current epoch number (0-indexed)
         num_epochs: Total number of epochs
@@ -38,6 +45,8 @@ def train_epoch(
     """
     model.train()
     total_loss = 0.0
+    total_task_loss = 0.0
+    total_ortho_loss = 0.0
     num_batches = 0
 
     progress_bar = tqdm(
@@ -57,7 +66,11 @@ def train_epoch(
             labels=labels,
         )
 
-        loss: Tensor = outputs.loss
+        task_loss: Tensor = outputs.loss
+
+        ortho_loss: Tensor = moe_model.compute_total_orthogonal_loss()
+
+        loss = task_loss + orthogonal_loss_weight * ortho_loss
 
         if gradient_accumulation_steps > 1:
             loss = loss / gradient_accumulation_steps
@@ -65,9 +78,12 @@ def train_epoch(
         loss.backward()
 
         total_loss += loss.item() * gradient_accumulation_steps
+        total_task_loss += task_loss.item()
+        total_ortho_loss += ortho_loss.item()
         num_batches += 1
 
         if (step + 1) % gradient_accumulation_steps == 0:
+            # Clip gradients
             if max_grad_norm > 0:
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
 
@@ -82,12 +98,22 @@ def train_epoch(
                 current_lr = optimizer.param_groups[0]["lr"]
                 progress_bar.set_postfix(
                     {
-                        "loss": f"{loss.item() * gradient_accumulation_steps:.4f}",
+                        "total_loss": f"{loss.item() * gradient_accumulation_steps:.4f}",
+                        "task_loss": f"{task_loss.item():.4f}",
+                        "ortho_loss": f"{ortho_loss.item():.4f}",
                         "lr": f"{current_lr:.2e}",
                     }
                 )
 
     avg_loss = total_loss / num_batches
+    avg_task_loss = total_task_loss / num_batches
+    avg_ortho_loss = total_ortho_loss / num_batches
+
+    print(f"\nEpoch {epoch + 1} Summary:")
+    print(f"  Total Loss: {avg_loss:.4f}")
+    print(f"  Task Loss: {avg_task_loss:.4f}")
+    print(f"  Orthogonal Loss: {avg_ortho_loss:.4f}")
+
     return avg_loss
 
 

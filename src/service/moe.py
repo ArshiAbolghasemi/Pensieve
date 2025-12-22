@@ -119,7 +119,7 @@ class MoELoRALayer(nn.Module):
     ) -> tuple[nn.ParameterList, nn.ParameterList]:
         method_map: dict[str, DecompositionMethod] = {
             "pissa": DecompositionMethod.PISSA,
-            "milora": DecompositionMethod.PISSA,
+            "milora": DecompositionMethod.MILORA,
             "goat": DecompositionMethod.GOAT,
             "goat_mini": DecompositionMethod.GOAT_MINI,
             "pissa_milora": DecompositionMethod.PISSA_MILORA,
@@ -151,9 +151,37 @@ class MoELoRALayer(nn.Module):
 
         return lora_A_params, lora_B_params
 
-    def forward(self, x: Tensor) -> Tensor:
-        base_output: Tensor = self.base_layer(x)
+    def compute_orthogonal_loss(self) -> Tensor:
+        """
+        Compute orthogonal regularization loss for router: ||RR^T - I||_F^2
 
+        This encourages the router weight matrix to have orthogonal rows,
+        which helps prevent expert collapse and promotes diverse routing.
+
+        Returns:
+            Orthogonal loss scalar
+        """
+        R = self.router.weight
+
+        RRT = R @ R.T
+
+        I = torch.eye(self.num_experts, device=R.device, dtype=R.dtype)
+
+        return torch.norm(RRT - I, p="fro") ** 2
+
+    def forward(
+        self, x: Tensor, return_aux_loss: bool = False
+    ) -> Tensor | tuple[Tensor, Tensor]:
+        """
+        Forward pass with expert routing.
+
+        Args:
+            x: Input tensor of shape (batch_size, seq_len, in_features)
+            return_aux_loss: If True, return (output, aux_loss) tuple
+
+        Returns:
+            Output tensor or (output, aux_loss) tuple
+        """
         original_shape: torch.Size = x.shape
         x_flat: Tensor = x.view(-1, self.in_features)
 
@@ -161,6 +189,7 @@ class MoELoRALayer(nn.Module):
         router_probs: Tensor = F.softmax(router_logits, dim=-1)
 
         topk_probs, topk_indices = torch.topk(router_probs, self.top_k, dim=-1)
+
         topk_probs = topk_probs / topk_probs.sum(dim=-1, keepdim=True)
 
         batch_seq_size: int = x_flat.shape[0]
@@ -171,9 +200,9 @@ class MoELoRALayer(nn.Module):
             dtype=x.dtype,
         )
 
-        for i in range(self.top_k):
-            expert_idx: Tensor = topk_indices[:, i]
-            expert_weight: Tensor = topk_probs[:, i : i + 1]
+        for k_idx in range(self.top_k):
+            expert_idx: Tensor = topk_indices[:, k_idx]
+            expert_weight: Tensor = topk_probs[:, k_idx : k_idx + 1]
 
             for expert_id in range(self.num_experts):
                 mask: Tensor = expert_idx == expert_id
@@ -188,13 +217,30 @@ class MoELoRALayer(nn.Module):
 
                 x_dropped: Tensor = self.dropout(x_expert)
                 lora_out: Tensor = (x_dropped @ lora_A.T) @ lora_B.T
+
                 lora_out = lora_out * self.scaling
 
                 expert_output[mask] += weight_expert * lora_out
 
         expert_output = expert_output.view(*original_shape[:-1], self.out_features)
 
-        return base_output + expert_output
+        if self.config.adapter_init == "random":
+            base_output: Tensor = self.base_layer(x)
+            final_output = base_output + expert_output
+        else:
+            base_output: Tensor = self.base_layer(x)
+
+            if self.residual_weight is not None:
+                residual_output: Tensor = F.linear(x, self.residual_weight, None)
+                final_output = base_output - residual_output + expert_output
+            else:
+                final_output = base_output + expert_output
+
+        if return_aux_loss:
+            aux_loss = self.compute_orthogonal_loss()
+            return final_output, aux_loss
+
+        return final_output
 
 
 class MoELoRAModel:
@@ -233,6 +279,18 @@ class MoELoRAModel:
             params.extend(layer.lora_A_experts.parameters())
             params.extend(layer.lora_B_experts.parameters())
         return params
+
+    def compute_total_orthogonal_loss(self) -> Tensor:
+        """
+        Compute total orthogonal loss across all MoE layers.
+
+        Returns:
+            Total orthogonal loss
+        """
+        total_loss = torch.tensor(0.0, device=next(iter(self.model.parameters())).device)
+        for layer in self.moe_layers.values():
+            total_loss += layer.compute_orthogonal_loss()
+        return total_loss
 
     def print_trainable_parameters(self) -> None:
         trainable_params: int = 0

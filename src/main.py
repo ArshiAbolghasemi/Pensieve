@@ -115,12 +115,14 @@ def main():
 
         train_loss = train_epoch(
             model=model,
+            moe_model=moe_model,
             train_dataloader=train_dataloader,
             optimizer=optimizer,
             scheduler=scheduler,
             gradient_accumulation_steps=training_config.gradient_accumulation_steps,
             max_grad_norm=1.0,
             logging_steps=10,
+            orthogonal_loss_weight=0.01,
             device="cuda",
             epoch=epoch,
             num_epochs=training_config.num_epochs,
@@ -135,6 +137,7 @@ def main():
         )
         logger.info(f"Validation Loss: {val_loss:.4f}")
 
+        # Save best model
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             checkpoint_path = output_path / "best_model"
