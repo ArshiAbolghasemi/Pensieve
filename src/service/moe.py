@@ -1,3 +1,4 @@
+import logging
 import math
 
 import torch
@@ -8,6 +9,9 @@ from transformers import PreTrainedModel
 from config.moe import MoELoRAConfig
 from service.adapter import DecompositionMethod, SVDAdapterInitializer
 from service.router import svd_router_initialization
+
+
+logger = logging.getLogger(__name__)
 
 
 class MoELoRALayer(nn.Module):
@@ -239,7 +243,7 @@ class MoELoRAModel:
             if param.requires_grad:
                 trainable_params += param.numel()
 
-        print(
+        logger.info(
             f"Trainable params: {trainable_params:,} || "
             f"All params: {all_params:,} || "
             f"Trainable %: {100 * trainable_params / all_params:.2f}"
