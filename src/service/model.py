@@ -27,17 +27,19 @@ def get_model(*, model_name: str, **kwargs) -> PreTrainedModel:
     """
     load_in_4bit = kwargs.get("load_in_4bit", False)
     load_in_8bit = kwargs.get("load_in_8bit", False)
+
     if load_in_8bit and load_in_4bit:
         msg = "Choose one approach for quantization"
         raise ValueError(msg)
 
-    torch_dtype = kwargs.get("torch_dtype", torch.bfloat16)
+    dtype = kwargs.get("torch_dtype", torch.bfloat16)
+
     quantization_config = None
     if load_in_4bit:
         quantization_config = BitsAndBytesConfig(
             load_in_4bit=True,
             bnb_4bit_quant_type="nf4",
-            bnb_4bit_compute_dtype=torch_dtype,
+            bnb_4bit_compute_dtype=dtype,
             bnb_4bit_use_double_quant=True,
         )
     elif load_in_8bit:
@@ -51,15 +53,13 @@ def get_model(*, model_name: str, **kwargs) -> PreTrainedModel:
     model_kwargs = {
         "trust_remote_code": trust_remote_code,
         "device_map": device_map,
-        "torch_dtype": torch_dtype,
+        "dtype": dtype,
     }
 
     if quantization_config:
         model_kwargs["quantization_config"] = quantization_config
 
-    use_flash_attention = kwargs.get("use_flash_attention", False)
-    if use_flash_attention:
-        model_kwargs["attn_implementation"] = "flash_attention_2"
+    model_kwargs["attn_implementation"] = "eager"
 
     model = AutoModelForCausalLM.from_pretrained(model_name, **model_kwargs)
 
@@ -89,6 +89,7 @@ def get_tokenizer(*, model_name: str, **kwargs) -> PreTrainedTokenizer:
     padding_side = kwargs.get("padding_side", "right")
     add_eos_token = kwargs.get("add_eos_token", True)
     add_bos_token = kwargs.get("add_bos_token", False)
+
     tokenizer = AutoTokenizer.from_pretrained(
         model_name,
         trust_remote_code=trust_remote_code,

@@ -1,14 +1,13 @@
 import logging
+
 import torch
-from typing import Optional
 from torch import Tensor
+from torch.optim.lr_scheduler import LRScheduler
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 from transformers import PreTrainedModel
-from torch.optim.lr_scheduler import LRScheduler
 
 from service.moe import MoELoRAModel
-
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +17,7 @@ def train_epoch(
     moe_model: MoELoRAModel,
     train_dataloader: DataLoader,
     optimizer: torch.optim.Optimizer,
-    scheduler: Optional[LRScheduler] = None,
+    scheduler: LRScheduler | None = None,
     gradient_accumulation_steps: int = 1,
     max_grad_norm: float = 1.0,
     logging_steps: int = 10,
@@ -27,8 +26,7 @@ def train_epoch(
     epoch: int = 0,
     num_epochs: int = 1,
 ) -> float:
-    """
-    Train for one epoch with orthogonal regularization for router.
+    """Train for one epoch with orthogonal regularization for router.
 
     Args:
         model: Model to train
@@ -46,6 +44,7 @@ def train_epoch(
 
     Returns:
         Average training loss for the epoch
+
     """
     model.train()
     total_loss = 0.0
@@ -125,8 +124,7 @@ def validate(
     val_dataloader: DataLoader,
     device: str = "cuda",
 ) -> float:
-    """
-    Validate the model and return average loss.
+    """Validate the model and return average loss.
 
     Args:
         model: Model to validate
@@ -135,6 +133,7 @@ def validate(
 
     Returns:
         Average validation loss
+
     """
     model.eval()
     total_loss = 0.0

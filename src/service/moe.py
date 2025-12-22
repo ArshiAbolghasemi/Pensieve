@@ -10,7 +10,6 @@ from config.moe import MoELoRAConfig
 from service.adapter import DecompositionMethod, SVDAdapterInitializer
 from service.router import svd_router_initialization
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -152,14 +151,14 @@ class MoELoRALayer(nn.Module):
         return lora_A_params, lora_B_params
 
     def compute_orthogonal_loss(self) -> Tensor:
-        """
-        Compute orthogonal regularization loss for router: ||RR^T - I||_F^2
+        """Compute orthogonal regularization loss for router: ||RR^T - I||_F^2
 
         This encourages the router weight matrix to have orthogonal rows,
         which helps prevent expert collapse and promotes diverse routing.
 
         Returns:
             Orthogonal loss scalar
+
         """
         R = self.router.weight
 
@@ -172,8 +171,7 @@ class MoELoRALayer(nn.Module):
     def forward(
         self, x: Tensor, return_aux_loss: bool = False
     ) -> Tensor | tuple[Tensor, Tensor]:
-        """
-        Forward pass with expert routing.
+        """Forward pass with expert routing.
 
         Args:
             x: Input tensor of shape (batch_size, seq_len, in_features)
@@ -181,6 +179,7 @@ class MoELoRALayer(nn.Module):
 
         Returns:
             Output tensor or (output, aux_loss) tuple
+
         """
         original_shape: torch.Size = x.shape
         x_flat: Tensor = x.view(-1, self.in_features)
@@ -281,11 +280,11 @@ class MoELoRAModel:
         return params
 
     def compute_total_orthogonal_loss(self) -> Tensor:
-        """
-        Compute total orthogonal loss across all MoE layers.
+        """Compute total orthogonal loss across all MoE layers.
 
         Returns:
             Total orthogonal loss
+
         """
         total_loss = torch.tensor(0.0, device=next(iter(self.model.parameters())).device)
         for layer in self.moe_layers.values():
