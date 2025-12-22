@@ -81,5 +81,11 @@ def get_args_parser() -> argparse.ArgumentParser:
         default=100,
         help="Number of warmup steps for learning rate scheduler",
     )
+    parser.add_argument(
+        "--diversity_loss_coefficient",
+        type=float,
+        default=0.01,
+        help="coefficient for diversity loss",
+    )
 
     return parser

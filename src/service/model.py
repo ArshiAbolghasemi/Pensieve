@@ -19,6 +19,7 @@ def get_model(*, model_name: str, **kwargs) -> PreTrainedModel:
         device_map: Device mapping strategy
         trust_remote_code: Whether to trust remote code
         torch_dtype: Data type for model weights
+        use_flash_attention: Whether to use flash attention (if supported)
 
     Returns:
         model: Loaded model instance
@@ -58,7 +59,12 @@ def get_model(*, model_name: str, **kwargs) -> PreTrainedModel:
     if quantization_config:
         model_kwargs["quantization_config"] = quantization_config
 
-    model_kwargs["attn_implementation"] = "eager"
+    use_flash_attention = kwargs.get("use_flash_attention", False)
+
+    if use_flash_attention:
+        model_kwargs["attn_implementation"] = "flash_attention_2"
+    else:
+        model_kwargs["attn_implementation"] = "eager"
 
     model = AutoModelForCausalLM.from_pretrained(model_name, **model_kwargs)
 

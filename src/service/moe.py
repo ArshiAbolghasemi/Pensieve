@@ -50,6 +50,8 @@ class MoELoRALayer(nn.Module):
         )
 
         self.residual_weight = None
+        self.last_topk_indices = None
+
         logger.info(f"[{self.layer_name}] MoELoRALayer initialization complete.")
 
     def _initialize_router(self) -> nn.Linear:
@@ -90,7 +92,7 @@ class MoELoRALayer(nn.Module):
             lora_B = nn.Parameter(torch.zeros(self.out_features, self.r))
             lora_A_list.append(lora_A)
             lora_B_list.append(lora_B)
-            logger.debug(f"[{self.layer_name}] Expert {i} initialized (random).")
+            logger.info(f"[{self.layer_name}] Expert {i} initialized (random).")
         return lora_A_list, lora_B_list
 
     def _initialize_experts_svd(self) -> tuple[nn.ParameterList, nn.ParameterList]:
@@ -122,24 +124,77 @@ class MoELoRALayer(nn.Module):
         logger.info(f"[{self.layer_name}] SVD experts initialized.")
         return lora_A_params, lora_B_params
 
-    def compute_orthogonal_loss(self) -> Tensor:
-        R = self.router.weight
-        RRT = R @ R.T
-        I = torch.eye(self.num_experts, device=R.device, dtype=R.dtype)
-        loss = torch.norm(RRT - I, p="fro") ** 2
-        logger.debug(f"[{self.layer_name}] Orthogonal loss computed: {loss.item():.6f}")
-        return loss
+    def compute_diversity_loss(self, topk_indices: Tensor) -> Tensor:
+        """Compute diversity loss based on cosine similarity between top-k experts.
+
+        Loss = average pairwise cosine similarity between selected experts.
+        Lower is better (encourages expert diversity).
+
+        Args:
+            topk_indices: Tensor of shape [N, top_k] (N = batch * seq_len)
+
+        Returns:
+            Scalar Tensor (diversity loss)
+
+        """
+        device = topk_indices.device
+
+        if self.top_k <= 1:
+            return torch.zeros((), device=device)
+
+        expert_weights = []
+        for expert_id in range(self.num_experts):
+            A = self.lora_A_experts[expert_id]
+            B = self.lora_B_experts[expert_id]
+            W = (B @ A).flatten()
+            expert_weights.append(W)
+
+        expert_weights = torch.stack(expert_weights, dim=0)
+
+        expert_weights = F.normalize(expert_weights, dim=1)
+
+        total_similarity = torch.zeros((), device=device)
+        num_pairs = 0
+
+        for i in range(self.top_k):
+            for j in range(i + 1, self.top_k):
+                idx_i = topk_indices[:, i]
+                idx_j = topk_indices[:, j]
+
+                w_i = expert_weights[idx_i]
+                w_j = expert_weights[idx_j]
+
+                sim = (w_i * w_j).sum(dim=1)
+
+                total_similarity = total_similarity + sim.mean()
+                num_pairs += 1
+
+        return total_similarity / num_pairs
 
     def forward(
         self, x: Tensor, return_aux_loss: bool = False
     ) -> Tensor | tuple[Tensor, Tensor]:
+        """Forward pass with token-wise expert routing.
+
+        Args:
+            x: Input tensor of shape (batch_size, seq_len, in_features)
+            return_aux_loss: If True, return (output, diversity_loss) tuple
+
+        Returns:
+            Output tensor or (output, diversity_loss) tuple
+
+        """
         original_shape = x.shape
         x_flat = x.view(-1, self.in_features)
 
         router_logits = self.router(x_flat)
         router_probs = F.softmax(router_logits, dim=-1)
+
         topk_probs, topk_indices = torch.topk(router_probs, self.top_k, dim=-1)
+
         topk_probs = topk_probs / topk_probs.sum(dim=-1, keepdim=True)
+
+        self.last_topk_indices = topk_indices
 
         expert_output = torch.zeros(
             x_flat.shape[0], self.out_features, device=x.device, dtype=x.dtype
@@ -168,18 +223,15 @@ class MoELoRALayer(nn.Module):
         expert_output = expert_output.view(*original_shape[:-1], self.out_features)
         base_output = self.base_layer(x)
 
-        if self.config.adapter_init == "random":
-            final_output = base_output + expert_output
+        if self.residual_weight is not None:
+            residual_output = F.linear(x, self.residual_weight, None)
+            final_output = base_output - residual_output + expert_output
         else:
-            if self.residual_weight is not None:
-                residual_output = F.linear(x, self.residual_weight, None)
-                final_output = base_output - residual_output + expert_output
-            else:
-                final_output = base_output + expert_output
+            final_output = base_output + expert_output
 
         if return_aux_loss:
-            aux_loss = self.compute_orthogonal_loss()
-            return final_output, aux_loss
+            diversity_loss = self.compute_diversity_loss(topk_indices)
+            return final_output, diversity_loss
 
         return final_output
 
@@ -211,22 +263,35 @@ class MoELoRAModel:
 
     def get_trainable_parameters(self) -> list[nn.Parameter]:
         params = []
-        for name, layer in self.moe_layers.items():
+        for layer in self.moe_layers.values():
             params.extend(layer.router.parameters())
             params.extend(layer.lora_A_experts.parameters())
             params.extend(layer.lora_B_experts.parameters())
-            logger.debug(
-                f"[{name}] Added {len(list(layer.parameters()))} trainable parameters."
-            )
         return params
 
-    def compute_total_orthogonal_loss(self) -> Tensor:
+    def compute_total_diversity_loss(self) -> Tensor:
+        """Compute total diversity loss across all MoE layers.
+
+        Returns:
+            Total diversity loss
+
+        """
         total_loss = torch.tensor(0.0, device=next(iter(self.model.parameters())).device)
+        num_layers = 0
+
         for name, layer in self.moe_layers.items():
-            loss = layer.compute_orthogonal_loss()
-            total_loss += loss
-            logger.debug(f"[{name}] Orthogonal loss: {loss.item():.6f}")
-        logger.info(f"Total orthogonal loss across all MoE layers: {total_loss.item():.6f}")
+            if layer.last_topk_indices is not None:
+                loss = layer.compute_diversity_loss(layer.last_topk_indices)
+                total_loss += loss
+                num_layers += 1
+                logger.debug(f"[{name}] Diversity loss: {loss.item():.6f}")
+
+        if num_layers > 0:
+            logger.debug(
+                f"Total diversity loss across {num_layers} MoE layers: "
+                f"{total_loss.item():.6f}"
+            )
+
         return total_loss
 
     def print_trainable_parameters(self) -> None:
