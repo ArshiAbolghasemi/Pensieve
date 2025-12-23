@@ -71,6 +71,7 @@ def get_model(*, model_name: str, **kwargs) -> PreTrainedModel:
     if load_in_8bit or load_in_4bit:
         model = prepare_model_for_kbit_training(model)
 
+    model.config.use_cache = False
     model.gradient_checkpointing_enable()
 
     return model
