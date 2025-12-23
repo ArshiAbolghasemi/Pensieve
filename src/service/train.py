@@ -1,3 +1,5 @@
+import logging
+
 import torch
 from torch import Tensor
 from torch.optim.lr_scheduler import LRScheduler
@@ -6,6 +8,8 @@ from tqdm import tqdm
 from transformers import PreTrainedModel
 
 from service.moe import MoELoRAModel
+
+logger = logging.getLogger(__name__)
 
 
 def train_epoch(
@@ -110,10 +114,10 @@ def train_epoch(
     avg_task_loss = total_task_loss / num_batches
     avg_diversity_loss = total_diversity_loss / num_batches
 
-    print(f"\nEpoch {epoch + 1} Summary:")
-    print(f"  Total Loss: {avg_loss:.4f}")
-    print(f"  Task Loss: {avg_task_loss:.4f}")
-    print(f"  Diversity Loss: {avg_diversity_loss:.4f}")
+    logger.info("\nEpoch %d Summary:", epoch + 1)
+    logger.info("  Total Loss: %.4f", avg_loss)
+    logger.info("  Task Loss: %.4f", avg_task_loss)
+    logger.info("  Diversity Loss: %.4f", avg_diversity_loss)
 
     return avg_loss
 
@@ -158,5 +162,4 @@ def validate(
 
             progress_bar.set_postfix({"loss": f"{loss.item():.4f}"})
 
-    avg_loss = total_loss / num_batches
-    return avg_loss
+    return total_loss / num_batches
