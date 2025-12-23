@@ -1,11 +1,11 @@
 import logging
+from typing import cast
 
 import torch
-from torch import Tensor
+from torch import Tensor, nn
 from torch.optim.lr_scheduler import LRScheduler
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-from transformers import PreTrainedModel
 
 from service.moe import MoELoRAModel
 
@@ -13,8 +13,7 @@ logger = logging.getLogger(__name__)
 
 
 def train_epoch(
-    model: PreTrainedModel,
-    moe_model: MoELoRAModel,
+    moe_model: nn.Module,
     train_dataloader: DataLoader,
     optimizer: torch.optim.Optimizer,
     scheduler: LRScheduler | None = None,
@@ -26,30 +25,8 @@ def train_epoch(
     epoch: int = 0,
     num_epochs: int = 1,
 ) -> float:
-    """Train for one epoch with diversity regularization for MoE routing.
-
-    Diversity loss encourages top-k selected experts to be different from each other
-    by penalizing high cosine similarity between their weight representations.
-
-    Args:
-        model: Model to train
-        moe_model: MoE model wrapper for accessing layers
-        train_dataloader: Training data loader
-        optimizer: Optimizer
-        scheduler: Optional learning rate scheduler
-        gradient_accumulation_steps: Gradient accumulation steps
-        max_grad_norm: Maximum gradient norm for clipping
-        logging_steps: Log every N steps
-        diversity_loss_weight: Weight for diversity regularization loss
-        device: Device to train on
-        epoch: Current epoch number (0-indexed)
-        num_epochs: Total number of epochs
-
-    Returns:
-        Average training loss for the epoch
-
-    """
-    model.train()
+    """Train for one epoch with diversity regularization."""
+    moe_model.train()
     total_loss = 0.0
     total_task_loss = 0.0
     total_diversity_loss = 0.0
@@ -66,7 +43,7 @@ def train_epoch(
         attention_mask: Tensor = batch["attention_mask"].to(device)
         labels: Tensor = batch["labels"].to(device)
 
-        outputs = model(
+        outputs = moe_model(
             input_ids=input_ids,
             attention_mask=attention_mask,
             labels=labels,
@@ -74,7 +51,9 @@ def train_epoch(
 
         task_loss: Tensor = outputs.loss
 
-        diversity_loss: Tensor = moe_model.compute_total_diversity_loss()
+        diversity_loss: Tensor = cast(
+            "MoELoRAModel", moe_model
+        ).compute_total_diversity_loss()
 
         loss = task_loss + diversity_loss_weight * diversity_loss
 
@@ -90,7 +69,7 @@ def train_epoch(
 
         if (step + 1) % gradient_accumulation_steps == 0:
             if max_grad_norm > 0:
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
+                torch.nn.utils.clip_grad_norm_(moe_model.parameters(), max_grad_norm)
 
             optimizer.step()
 
@@ -123,22 +102,12 @@ def train_epoch(
 
 
 def validate(
-    model: PreTrainedModel,
+    moe_model: nn.Module,
     val_dataloader: DataLoader,
     device: str = "cuda",
 ) -> float:
-    """Validate the model and return average loss.
-
-    Args:
-        model: Model to validate
-        val_dataloader: Validation data loader
-        device: Device to run validation on
-
-    Returns:
-        Average validation loss
-
-    """
-    model.eval()
+    """Validate the model and return average loss."""
+    moe_model.eval()
     total_loss = 0.0
     num_batches = 0
 
@@ -150,7 +119,7 @@ def validate(
             attention_mask: Tensor = batch["attention_mask"].to(device)
             labels: Tensor = batch["labels"].to(device)
 
-            outputs = model(
+            outputs = moe_model(
                 input_ids=input_ids,
                 attention_mask=attention_mask,
                 labels=labels,

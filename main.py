@@ -114,7 +114,6 @@ def main():
         logger.info(f"\nEpoch {epoch + 1}/{training_config.num_epochs}")
 
         train_loss = train_epoch(
-            model=model,
             moe_model=moe_model,
             train_dataloader=train_dataloader,
             optimizer=optimizer,
@@ -131,7 +130,7 @@ def main():
         logger.info(f"Training Loss: {train_loss:.4f}")
 
         val_loss = validate(
-            model=model,
+            moe_model=moe_model,
             val_dataloader=val_dataloader,
             device="cuda",
         )
@@ -142,7 +141,7 @@ def main():
             checkpoint_path = output_path / "best_model"
             checkpoint_path.mkdir(exist_ok=True)
 
-            model.save_pretrained(checkpoint_path)
+            moe_model.save_pretrained(checkpoint_path)
             tokenizer.save_pretrained(checkpoint_path)
 
             torch.save(
@@ -154,7 +153,7 @@ def main():
                     "optimizer_state": optimizer.state_dict(),
                     "scheduler_state": scheduler.state_dict(),
                 },
-                checkpoint_path / "moe_state.pt",
+                checkpoint_path / "training_state.pt",
             )
 
             logger.info(f"Saved best model to {checkpoint_path}")
@@ -163,7 +162,7 @@ def main():
             checkpoint_path = output_path / f"checkpoint_epoch_{epoch + 1}"
             checkpoint_path.mkdir(exist_ok=True)
 
-            model.save_pretrained(checkpoint_path)
+            moe_model.save_pretrained(checkpoint_path)
             tokenizer.save_pretrained(checkpoint_path)
 
             torch.save(
@@ -176,7 +175,7 @@ def main():
                     "optimizer_state": optimizer.state_dict(),
                     "scheduler_state": scheduler.state_dict(),
                 },
-                checkpoint_path / "moe_state.pt",
+                checkpoint_path / "training_state.pt",
             )
 
             logger.info(f"Saved checkpoint to {checkpoint_path}")
