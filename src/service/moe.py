@@ -284,10 +284,10 @@ class MoELoRAModel:
                 loss = layer.compute_diversity_loss(layer.last_topk_indices)
                 total_loss += loss
                 num_layers += 1
-                logger.debug(f"[{name}] Diversity loss: {loss.item():.6f}")
+                logger.info(f"[{name}] Diversity loss: {loss.item():.6f}")
 
         if num_layers > 0:
-            logger.debug(
+            logger.info(
                 f"Total diversity loss across {num_layers} MoE layers: "
                 f"{total_loss.item():.6f}"
             )
