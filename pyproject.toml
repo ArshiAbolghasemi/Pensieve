@@ -21,6 +21,7 @@ dependencies = [
     "tqdm==4.67.1",
     "bitsandbytes==0.49.0",
     "flash-attn==2.8.3",
+    "ninja",
 ]
 
 [project.optional-dependencies]
@@ -28,5 +29,12 @@ dev = [
     "ruff==0.14.1",
 ]
 
+[tool.uv]
+no-build-isolation-package = ["flash-attn"]
+
 [tool.uv.extra-build-dependencies]
-flash-attn = ["torch"]
+flash-attn = [
+    "setuptools", 
+    "wheel", 
+    { requirement = "torch", match-runtime = true }
+]
