@@ -85,7 +85,7 @@ class MoELoRALayer(nn.Module):
             logger.error(f"Router initialization failed: {e}")
             raise
 
-        return router
+        return router.to(self.base_layer.weight.device)
 
     def _initialize_experts(self) -> tuple[nn.ParameterList, nn.ParameterList]:
         logger.info(f"Initializing LoRA experts for layer {self.layer_name}")
@@ -100,14 +100,19 @@ class MoELoRALayer(nn.Module):
         lora_A_list = nn.ParameterList()
         lora_B_list = nn.ParameterList()
 
-        for idx in range(self.num_experts):
-            lora_A = nn.Parameter(torch.empty(self.r, self.in_features))
+        device = self.base_layer.weight.device
+        dtype = self.base_layer.weight.dtype
+
+        for _ in range(self.num_experts):
+            lora_A = nn.Parameter(
+                torch.empty(self.r, self.in_features, device=device, dtype=dtype)
+            )
             nn.init.kaiming_uniform_(lora_A, a=math.sqrt(5))
-            lora_B = nn.Parameter(torch.zeros(self.out_features, self.r))
+            lora_B = nn.Parameter(
+                torch.zeros(self.out_features, self.r, device=device, dtype=dtype)
+            )
             lora_A_list.append(lora_A)
             lora_B_list.append(lora_B)
-
-        logger.info(f"Randomly initialized {self.num_experts} LoRA experts")
         return lora_A_list, lora_B_list
 
     def _initialize_experts_svd(self) -> tuple[nn.ParameterList, nn.ParameterList]:
@@ -120,30 +125,31 @@ class MoELoRALayer(nn.Module):
         }
         method = method_map[self.config.adapter_init]
 
-        try:
-            with torch.no_grad():
-                initializer = SVDAdapterInitializer(
-                    layer=self.base_layer,
-                    rank=self.r,
-                    method=method,
-                    num_experts=self.num_experts,
-                    scaling_factor=1.0,
-                    init_coefficient=1.0,
-                    rho=10.0,
-                )
-                lora_A_list, lora_B_list, residual_weight = initializer.execute()
-                self.residual_weight = residual_weight
+        device = self.base_layer.weight.device
+        dtype = self.base_layer.weight.dtype
 
-            logger.info(
-                f"SVD adapter initialization completed | method={self.config.adapter_init}"
+        with torch.no_grad():
+            initializer = SVDAdapterInitializer(
+                layer=self.base_layer,
+                rank=self.r,
+                method=method,
+                num_experts=self.num_experts,
+                scaling_factor=1.0,
+                init_coefficient=1.0,
+                rho=10.0,
             )
+            lora_A_list, lora_B_list, residual_weight = initializer.execute()
 
-        except Exception as e:
-            logger.error(f"SVD adapter initialization failed: {e}")
-            raise
+            if residual_weight is not None:
+                self.residual_weight = residual_weight.to(device=device, dtype=dtype)
 
-        lora_A_params = nn.ParameterList([nn.Parameter(a) for a in lora_A_list])
-        lora_B_params = nn.ParameterList([nn.Parameter(b) for b in lora_B_list])
+        lora_A_params = nn.ParameterList(
+            [nn.Parameter(a.to(device=device, dtype=dtype)) for a in lora_A_list]
+        )
+        lora_B_params = nn.ParameterList(
+            [nn.Parameter(b.to(device=device, dtype=dtype)) for b in lora_B_list]
+        )
+
         return lora_A_params, lora_B_params
 
     def compute_diversity_loss(self, topk_indices: Tensor) -> Tensor:
