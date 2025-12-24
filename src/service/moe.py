@@ -128,6 +128,9 @@ class MoELoRALayer(nn.Module):
         device = self.base_layer.weight.device
         dtype = self.base_layer.weight.dtype
 
+        if not torch.is_floating_point(self.base_layer.weight):
+            dtype = torch.float32
+
         with torch.no_grad():
             initializer = SVDAdapterInitializer(
                 layer=self.base_layer,
