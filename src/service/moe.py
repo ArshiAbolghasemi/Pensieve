@@ -152,17 +152,6 @@ class MoELoRALayer(nn.Module):
         return lora_A_params, lora_B_params
 
     def compute_diversity_loss(self, topk_indices: Tensor) -> Tensor:
-        """Efficiently compute diversity loss using LOW-RANK similarity.
-
-        Key insight: For matrices W_i = B_i @ A_i and W_j = B_j @ A_j,
-        the Frobenius inner product is:
-            <W_i, W_j> = Tr(W_i^T @ W_j) = Tr(A_i^T @ B_i^T @ B_j @ A_j)
-
-        This can be computed in O(r^2 * (m + n)) instead of O(m * n)!
-
-        Memory: O(r^2) instead of O(m * n)
-        Speed: ~100-1000x faster for typical LoRA ranks
-        """
         device = topk_indices.device
 
         if self.top_k <= 1:
@@ -184,9 +173,8 @@ class MoELoRALayer(nn.Module):
         )
 
         BtB = torch.bmm(B_stack.transpose(1, 2), B_stack)
-
-        temp = torch.bmm(A_stack, BtB)
-        norms_squared = torch.einsum("ern,ern->e", temp, A_stack)
+        temp = torch.einsum('eij,ejk->eik', A_stack, BtB)
+        norms_squared = torch.einsum('eij,eij->e', A_stack, temp)
         norms = torch.sqrt(norms_squared + 1e-8)
 
         total_similarity = torch.tensor(0.0, device=device)
@@ -203,12 +191,11 @@ class MoELoRALayer(nn.Module):
                 B_j = B_stack[idx_j]
 
                 BiBj = torch.bmm(B_i.transpose(1, 2), B_j)
-                temp = torch.bmm(BiBj, A_j)
-                inner_product = torch.einsum("brn,brn->b", A_i, temp)
+                temp_j = torch.bmm(BiBj, A_j)
+                inner_product = torch.einsum('bij,bij->b', A_i, temp_j)
 
                 norm_i = norms[idx_i]
                 norm_j = norms[idx_j]
-
                 cosine_sim = inner_product / (norm_i * norm_j + 1e-8)
 
                 total_similarity = total_similarity + cosine_sim.mean()
