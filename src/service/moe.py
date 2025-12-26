@@ -184,8 +184,9 @@ class MoELoRALayer(nn.Module):
         )
 
         BtB = torch.bmm(B_stack.transpose(1, 2), B_stack)
-        AtBtB = torch.bmm(A_stack, BtB)
-        norms_squared = torch.einsum("eij,eji->e", A_stack, AtBtB)
+
+        temp = torch.bmm(A_stack, BtB)
+        norms_squared = torch.einsum("ern,ern->e", temp, A_stack)
         norms = torch.sqrt(norms_squared + 1e-8)
 
         total_similarity = torch.tensor(0.0, device=device)
@@ -202,7 +203,6 @@ class MoELoRALayer(nn.Module):
                 B_j = B_stack[idx_j]
 
                 BiBj = torch.bmm(B_i.transpose(1, 2), B_j)
-
                 temp = torch.bmm(BiBj, A_j)
                 inner_product = torch.einsum("brn,brn->b", A_i, temp)
 
@@ -308,7 +308,7 @@ class MoELoRAModel(nn.Module):
         logger.info(f"Collected trainable MoE parameters | count={len(params)}")
         return params
 
-    def compute_total_diversity_loss(self, method: str = "lowrank") -> Tensor:
+    def compute_total_diversity_loss(self) -> Tensor:
         """Compute total diversity loss across all MoE layers.
 
         Args:
@@ -328,11 +328,8 @@ class MoELoRAModel(nn.Module):
         for layer in self.moe_layers.values():
             moe_layer = cast("MoELoRALayer", layer)
             if moe_layer.last_topk_indices is not None:
-                total_loss += moe_layer.compute_diversity_loss(
-                    moe_layer.last_topk_indices
-                )
+                total_loss += moe_layer.compute_diversity_loss(moe_layer.last_topk_indices)
 
-        logger.info(f"Total diversity loss computed using {method} method")
         return total_loss
 
     def print_trainable_parameters(self) -> None:
