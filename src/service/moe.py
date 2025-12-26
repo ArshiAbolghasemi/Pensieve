@@ -173,8 +173,8 @@ class MoELoRALayer(nn.Module):
         )
 
         BtB = torch.bmm(B_stack.transpose(1, 2), B_stack)
-        temp = torch.einsum('eij,ejk->eik', A_stack, BtB)
-        norms_squared = torch.einsum('eij,eij->e', A_stack, temp)
+        temp = torch.einsum("eij,ejk->eik", A_stack, BtB)
+        norms_squared = torch.einsum("eij,eij->e", A_stack, temp)
         norms = torch.sqrt(norms_squared + 1e-8)
 
         total_similarity = torch.tensor(0.0, device=device)
@@ -192,7 +192,68 @@ class MoELoRALayer(nn.Module):
 
                 BiBj = torch.bmm(B_i.transpose(1, 2), B_j)
                 temp_j = torch.bmm(BiBj, A_j)
-                inner_product = torch.einsum('bij,bij->b', A_i, temp_j)
+                inner_product = torch.einsum("bij,bij->b", A_i, temp_j)
+
+                norm_i = norms[idx_i]
+                norm_j = norms[idx_j]
+                cosine_sim = inner_product / (norm_i * norm_j + 1e-8)
+
+                total_similarity = total_similarity + cosine_sim.mean()
+                num_pairs += 1
+
+        return total_similarity / num_pairs if num_pairs > 0 else total_similarity
+
+    def compute_diversity_loss(self, topk_indices: Tensor) -> Tensor:
+        if self.top_k <= 1:
+            return torch.zeros((), device=device)
+
+        device = topk_indices.device
+
+        batch_size = topk_indices.shape[0]
+
+        max_samples = 1000
+        if batch_size > max_samples:
+            sample_indices = torch.randperm(batch_size, device=device)[:max_samples]
+            topk_indices = topk_indices[sample_indices]
+            batch_size = max_samples
+
+        A_stack = torch.stack(
+            [self.lora_A_experts[i] for i in range(self.num_experts)], dim=0
+        )
+        B_stack = torch.stack(
+            [self.lora_B_experts[i] for i in range(self.num_experts)], dim=0
+        )
+
+        r = self.r
+        num_experts = self.num_experts
+
+        norms_squared = torch.zeros(num_experts, device=device)
+
+        for expert_idx in range(num_experts):
+            A_expert = A_stack[expert_idx]
+            B_expert = B_stack[expert_idx]
+            BtB = torch.matmul(B_expert.transpose(0, 1), B_expert)
+            temp = torch.matmul(A_expert, BtB)
+            norms_squared[expert_idx] = torch.sum(A_expert * temp)
+
+        norms = torch.sqrt(norms_squared + 1e-8)
+
+        total_similarity = torch.tensor(0.0, device=device)
+        num_pairs = 0
+
+        for i in range(self.top_k):
+            for j in range(i + 1, self.top_k):
+                idx_i = topk_indices[:, i]
+                idx_j = topk_indices[:, j]
+
+                A_i = A_stack[idx_i]
+                B_i = B_stack[idx_i]
+                A_j = A_stack[idx_j]
+                B_j = B_stack[idx_j]
+
+                BiBj = torch.bmm(B_i.transpose(1, 2), B_j)
+                temp_j = torch.bmm(BiBj, A_j)
+                inner_product = torch.einsum("bik,bik->b", A_i, temp_j)
 
                 norm_i = norms[idx_i]
                 norm_j = norms[idx_j]
