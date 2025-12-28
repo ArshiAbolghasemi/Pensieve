@@ -205,8 +205,8 @@ class MoELoRALayer(nn.Module):
                 norm_i = norms[idx_i]
                 norm_j = norms[idx_j]
                 cosine_sim = inner_product / (norm_i * norm_j + 1e-8)
-
-                total_similarity = total_similarity + cosine_sim.mean()
+                squared_sim = cosine_sim**2
+                total_similarity = total_similarity + squared_sim.mean()
                 num_pairs += 1
 
         return total_similarity / num_pairs if num_pairs > 0 else total_similarity
