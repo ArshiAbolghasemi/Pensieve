@@ -1,8 +1,7 @@
 import logging
-from typing import cast
 
 import torch
-from torch import Tensor, nn
+from torch import Tensor
 from torch.optim.lr_scheduler import LRScheduler
 from torch.utils.data import DataLoader
 from tqdm import tqdm
@@ -13,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 
 def train_epoch(
-    moe_model: nn.Module,
+    moe_model: MoELoRAModel,
     train_dataloader: DataLoader,
     optimizer: torch.optim.Optimizer,
     scheduler: LRScheduler | None = None,
@@ -51,9 +50,7 @@ def train_epoch(
 
         task_loss: Tensor = outputs.loss
 
-        diversity_loss: Tensor = cast(
-            "MoELoRAModel", moe_model
-        ).compute_total_diversity_loss()
+        diversity_loss: Tensor = moe_model.compute_total_diversity_loss()
 
         loss = task_loss + diversity_loss_weight * diversity_loss
 
@@ -102,7 +99,7 @@ def train_epoch(
 
 
 def validate(
-    moe_model: nn.Module,
+    moe_model: MoELoRAModel,
     val_dataloader: DataLoader,
     device: str = "cuda",
 ) -> float:
@@ -129,6 +126,13 @@ def validate(
             total_loss += loss.item()
             num_batches += 1
 
-            progress_bar.set_postfix({"loss": f"{loss.item():.4f}"})
+            pes_results = moe_model.compute_pairwise_expert_similarity()
+
+            progress_bar.set_postfix(
+                {
+                    "loss": f"{loss.item():.4f}",
+                    "pes": f"{pes_results['pes_model']:.4f}",
+                }
+            )
 
     return total_loss / num_batches

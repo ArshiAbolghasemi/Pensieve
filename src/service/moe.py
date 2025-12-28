@@ -49,6 +49,7 @@ class MoELoRALayer(nn.Module):
 
         self.residual_weight = None
         self.last_topk_indices = None
+        self.last_expert_outputs = None
 
     def _initialize_router(self) -> nn.Linear:
         logger.info(f"Initializing router for layer {self.layer_name}")
@@ -211,6 +212,32 @@ class MoELoRALayer(nn.Module):
 
         return total_similarity / num_pairs if num_pairs > 0 else total_similarity
 
+    def compute_expert_outputs(self, x: Tensor) -> Tensor:
+        """Compute outputs for all experts without routing.
+
+        Args:
+            x: Input tensor of shape (batch_size, in_features)
+
+        Returns:
+            Tensor of shape (batch_size, num_experts, out_features)
+
+        """
+        batch_size = x.shape[0]
+        expert_outputs = torch.zeros(
+            batch_size, self.num_experts, self.out_features, device=x.device, dtype=x.dtype
+        )
+
+        for expert_id in range(self.num_experts):
+            lora_A = self.lora_A_experts[expert_id]
+            lora_B = self.lora_B_experts[expert_id]
+
+            # Compute expert output: x @ A^T @ B^T
+            lora_out = (x @ lora_A.T) @ lora_B.T
+            lora_out = lora_out * self.scaling
+            expert_outputs[:, expert_id, :] = lora_out
+
+        return expert_outputs
+
     def forward(self, x: Tensor) -> Tensor:
         original_shape = x.shape
         x_flat = x.view(-1, self.in_features)
@@ -222,6 +249,8 @@ class MoELoRALayer(nn.Module):
         topk_probs = topk_probs / topk_probs.sum(dim=-1, keepdim=True)
 
         self.last_topk_indices = topk_indices
+
+        self.last_expert_outputs = self.compute_expert_outputs(x_flat)
 
         expert_output = torch.zeros(
             x_flat.shape[0], self.out_features, device=x.device, dtype=x.dtype
@@ -326,6 +355,82 @@ class MoELoRAModel(nn.Module):
                 total_loss += moe_layer.compute_diversity_loss(moe_layer.last_topk_indices)
 
         return total_loss
+
+    def compute_pairwise_expert_similarity(self) -> dict[str, float]:
+        """Compute Pairwise Expert Similarity (PES) metric.
+
+        PES measures expert specialization by computing the mean cosine similarity
+        between all pairs of expert outputs across a batch. Lower similarity indicates
+        greater diversity and specialization.
+
+        Formula:
+            PES_model = (1/|B|) * Σ_{x∈B} C_expert(x)
+            C_expert(x) = (2/(N(N-1))) * Σ_{i=1}^{N} Σ_{j=i+1}^{N} cos(f_i(x), f_j(x))
+
+        where N is the number of experts, B is the batch, f_i(x) is the output of
+        expert i on input x, and cos(u,v) = (u·v)/(||u||·||v||).
+
+        Returns:
+            Dictionary containing:
+                - 'pes_model': Overall PES averaged across all layers and batch samples
+                - 'pes_per_layer': Dictionary mapping layer names to their PES values
+
+        Note:
+            This requires that forward() was called with compute_pes=True to store
+            expert outputs. The metric considers all experts, not just top-k selected ones.
+
+        """
+        layer_pes_values = {}
+        total_pes = 0.0
+        num_layers_with_outputs = 0
+
+        for layer_name, layer in self.moe_layers.items():
+            moe_layer = cast("MoELoRALayer", layer)
+
+            if moe_layer.last_expert_outputs is None:
+                logger.warning(
+                    f"Layer {layer_name} has no stored expert outputs. "
+                    "Call forward() first."
+                )
+                continue
+
+            expert_outputs = moe_layer.last_expert_outputs
+            batch_size = expert_outputs.shape[0]
+            num_experts = expert_outputs.shape[1]
+
+            if num_experts < 2:
+                layer_pes_values[layer_name] = 0.0
+                continue
+
+            batch_similarities = []
+
+            for batch_idx in range(batch_size):
+                sample_outputs = expert_outputs[batch_idx]
+                sample_outputs_norm = F.normalize(sample_outputs, p=2, dim=1)
+                similarity_matrix = torch.matmul(sample_outputs_norm, sample_outputs_norm.T)
+
+                upper_triangle = torch.triu(similarity_matrix, diagonal=1)
+
+                num_pairs = (num_experts * (num_experts - 1)) / 2
+                mean_similarity = upper_triangle.sum() / num_pairs
+
+                batch_similarities.append(mean_similarity.item())
+
+            layer_pes = sum(batch_similarities) / len(batch_similarities)
+            layer_pes_values[layer_name] = layer_pes
+
+            logger.info(f"layer {layer_name} pes: {layer_pes}")
+
+            total_pes += layer_pes
+            num_layers_with_outputs += 1
+
+        pes_model = (
+            total_pes / num_layers_with_outputs if num_layers_with_outputs > 0 else 0.0
+        )
+
+        result = {"pes_model": pes_model, "pes_per_layer": layer_pes_values}
+
+        return result
 
     def print_trainable_parameters(self) -> None:
         trainable_params = 0
