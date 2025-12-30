@@ -5,10 +5,10 @@ from typing import cast
 
 import torch
 import torch.nn.functional as F
-from config.moe import MoELoRAConfig
 from torch import Tensor, nn
 from transformers import PreTrainedModel
 
+from config.mole import MoLELoRAConfig
 from service.adapter import DecompositionMethod, SVDAdapterInitializer
 from service.router import svd_router_initialization
 
@@ -21,7 +21,7 @@ class MoELoRALayer(nn.Module):
     def __init__(
         self,
         base_layer: nn.Linear,
-        config: MoELoRAConfig,
+        config: MoLELoRAConfig,
         layer_name: str,
     ) -> None:
         super().__init__()
@@ -289,7 +289,7 @@ class MoELoRALayer(nn.Module):
 
 
 class MoELoRAModel(nn.Module):
-    def __init__(self, base_model: PreTrainedModel, config: MoELoRAConfig) -> None:
+    def __init__(self, base_model: PreTrainedModel, config: MoLELoRAConfig) -> None:
         super().__init__()
         self.base_model = base_model
         self.config = config

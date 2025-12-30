@@ -1,11 +1,12 @@
 import logging
 
 import torch
-from service.moe import MoELoRAModel
 from torch import Tensor
 from torch.optim.lr_scheduler import LRScheduler
 from torch.utils.data import DataLoader
 from tqdm import tqdm
+
+from mole.model import MoELoRAModel
 
 logger = logging.getLogger(__name__)
 
