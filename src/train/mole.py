@@ -138,7 +138,9 @@ def main():
 
         if val_loss < best_val_loss:
             best_val_loss = val_loss
-            checkpoint_path = output_path / f"{args.adapter_init}_{args.router_init}"
+            checkpoint_path = output_path.joinpath(
+                f"{args.adapter_init}_{args.router_init}"
+            )
             checkpoint_path.mkdir(exist_ok=True)
 
             moe_model.save_pretrained(checkpoint_path)
