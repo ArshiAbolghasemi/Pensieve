@@ -4,7 +4,7 @@ from pathlib import Path
 import torch
 from peft import LoraConfig, get_peft_model
 
-from config.args import get_args_parser
+from config.args import get_train_args_parser
 from config.train import TrainingConfig
 from lora.train import train_epoch, validate
 from service.dataset import create_dataloaders
@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 
 def main():
-    parser = get_args_parser()
+    parser = get_train_args_parser()
     args = parser.parse_args()
 
     peft_config = LoraConfig(

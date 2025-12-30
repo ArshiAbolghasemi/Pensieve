@@ -3,7 +3,7 @@ from pathlib import Path
 
 import torch
 
-from config.args import get_args_parser
+from config.args import get_train_args_parser
 from config.mole import MoLELoRAConfig
 from config.train import TrainingConfig
 from mole.model import MoELoRAModel
@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 def main():
-    parser = get_args_parser()
+    parser = get_train_args_parser()
     args = parser.parse_args()
 
     moe_config = MoLELoRAConfig(
@@ -138,7 +138,7 @@ def main():
 
         if val_loss < best_val_loss:
             best_val_loss = val_loss
-            checkpoint_path = output_path / args.adapter_init + "_" + args.router_init
+            checkpoint_path = output_path / f"{args.adapter_init}_{args.router_init}"
             checkpoint_path.mkdir(exist_ok=True)
 
             moe_model.save_pretrained(checkpoint_path)

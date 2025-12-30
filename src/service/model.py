@@ -16,7 +16,6 @@ def get_model(*, model_name: str, **kwargs) -> PreTrainedModel:
         model_name: HuggingFace model identifier
         load_in_8bit: Load model in 8-bit quantization
         load_in_4bit: Load model in 4-bit quantization
-        device_map: Device mapping strategy
         trust_remote_code: Whether to trust remote code
         torch_dtype: Data type for model weights
         use_flash_attention: Whether to use flash attention (if supported)
@@ -48,11 +47,9 @@ def get_model(*, model_name: str, **kwargs) -> PreTrainedModel:
         )
 
     trust_remote_code = kwargs.get("trust_remote_code", True)
-    device_map = kwargs.get("device_map", "auto")
 
     model_kwargs = {
         "trust_remote_code": trust_remote_code,
-        "device_map": device_map,
         "dtype": dtype,
     }
 

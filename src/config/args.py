@@ -1,7 +1,7 @@
 import argparse
 
 
-def get_args_parser() -> argparse.ArgumentParser:
+def get_train_args_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Train MoE LoRA model")
 
     parser.add_argument(
@@ -86,6 +86,42 @@ def get_args_parser() -> argparse.ArgumentParser:
         type=float,
         default=0.01,
         help="coefficient for diversity loss",
+    )
+
+    return parser
+
+
+def get_benchmark_arg_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Evaluate models on benchmarks")
+    parser.add_argument(
+        "--model_name",
+        type=str,
+        required=True,
+        help="Base model name or path",
+    )
+    parser.add_argument(
+        "--lora_checkpoint",
+        type=str,
+        default="checkpoints/single_lora",
+        help="Path to LoRA checkpoint",
+    )
+    parser.add_argument(
+        "--moe_checkpoint",
+        type=str,
+        required=True,
+        help="Path to MoE checkpoint",
+    )
+    parser.add_argument(
+        "--batch_size",
+        type=int,
+        default=8,
+        help="Batch size for evaluation",
+    )
+    parser.add_argument(
+        "--device",
+        type=str,
+        default="cuda",
+        help="Device to run evaluation on",
     )
 
     return parser
