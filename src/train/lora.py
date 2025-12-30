@@ -2,14 +2,13 @@ import logging
 from pathlib import Path
 
 import torch
+from peft import LoraConfig, get_peft_model
 
 from config.args import get_args_parser
-from config.moe import MoELoRAConfig
 from config.train import TrainingConfig
+from lora.train import train_epoch, validate
 from service.dataset import create_dataloaders
 from service.model import get_model, get_tokenizer
-from service.moe import MoELoRAModel
-from service.train import train_epoch, validate
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
@@ -21,15 +20,14 @@ def main():
     parser = get_args_parser()
     args = parser.parse_args()
 
-    moe_config = MoELoRAConfig(
+    peft_config = LoraConfig(
         r=args.rank,
-        num_experts=args.num_experts,
-        top_k=args.top_k,
         lora_alpha=args.lora_alpha,
         lora_dropout=args.lora_dropout,
-        adapter_init=args.adapter_init,
-        router_init=args.router_init,
         target_modules=args.target_modules,
+        bias="none",
+        task_type="CAUSAL_LM",
+        init_lora_weights=True,
     )
 
     training_config = TrainingConfig(
@@ -50,14 +48,13 @@ def main():
     output_path.mkdir(parents=True, exist_ok=True)
 
     logger.info("=" * 80)
-    logger.info("MoE LoRA Configuration:")
+    logger.info("Single LoRA Configuration (PEFT):")
     logger.info(f"  Model: {training_config.model_name}")
-    logger.info(f"  Experts: {moe_config.num_experts}")
-    logger.info(f"  Top-K: {moe_config.top_k}")
-    logger.info(f"  Rank: {moe_config.r}")
-    logger.info(f"  Adapter Init: {moe_config.adapter_init}")
-    logger.info(f"  Router Init: {moe_config.router_init}")
-    logger.info(f"  Target Modules: {moe_config.target_modules}")
+    logger.info(f"  Rank: {peft_config.r}")
+    logger.info(f"  Alpha: {peft_config.lora_alpha}")
+    logger.info(f"  Dropout: {peft_config.lora_dropout}")
+    logger.info(f"  Target Modules: {peft_config.target_modules}")
+    logger.info(f"  Output Dir: {training_config.output_dir}")
     logger.info("=" * 80)
 
     logger.info("Loading tokenizer...")
@@ -67,30 +64,24 @@ def main():
     )
 
     logger.info("Loading base model...")
-    model = get_model(
+    base_model = get_model(
         model_name=training_config.model_name,
         load_in_4bit=training_config.load_in_4bit,
         torch_dtype=torch.bfloat16,
         use_flash_attention=training_config.use_flash_attention,
     )
 
+    logger.info("Creating PEFT model with LoRA adapters...")
+    model = get_peft_model(base_model, peft_config)
+    model.print_trainable_parameters()
+
     train_dataloader, val_dataloader = create_dataloaders(
         tokenizer=tokenizer,
         config=training_config,
     )
 
-    logger.info("Injecting MoE LoRA layers...")
-    moe_model = MoELoRAModel(model, moe_config)
-    moe_model.print_trainable_parameters()
-
-    for param in model.parameters():
-        param.requires_grad = False
-
-    for param in moe_model.get_trainable_parameters():
-        param.requires_grad = True
-
     optimizer = torch.optim.AdamW(
-        moe_model.get_trainable_parameters(),
+        model.parameters(),
         lr=training_config.learning_rate,
         betas=(0.9, 0.999),
         weight_decay=0.01,
@@ -114,14 +105,13 @@ def main():
         logger.info(f"\nEpoch {epoch + 1}/{training_config.num_epochs}")
 
         train_loss = train_epoch(
-            moe_model=moe_model,
+            lora_model=model,
             train_dataloader=train_dataloader,
             optimizer=optimizer,
             scheduler=scheduler,
             gradient_accumulation_steps=training_config.gradient_accumulation_steps,
             max_grad_norm=1.0,
             logging_steps=10,
-            diversity_loss_weight=args.diversity_loss_coefficient,
             device="cuda",
             epoch=epoch,
             num_epochs=training_config.num_epochs,
@@ -130,7 +120,7 @@ def main():
         logger.info(f"Training Loss: {train_loss:.4f}")
 
         val_loss = validate(
-            moe_model=moe_model,
+            lora_model=model,
             val_dataloader=val_dataloader,
             device="cuda",
         )
@@ -138,15 +128,15 @@ def main():
 
         if val_loss < best_val_loss:
             best_val_loss = val_loss
-            checkpoint_path = output_path / "best_model"
+            checkpoint_path = output_path / "single_lora"
             checkpoint_path.mkdir(exist_ok=True)
 
-            moe_model.save_pretrained(checkpoint_path)
+            model.save_pretrained(str(checkpoint_path))
             tokenizer.save_pretrained(checkpoint_path)
 
             torch.save(
                 {
-                    "moe_config": moe_config,
+                    "peft_config": peft_config,
                     "training_config": training_config,
                     "epoch": epoch,
                     "best_val_loss": best_val_loss,
@@ -157,28 +147,6 @@ def main():
             )
 
             logger.info(f"Saved best model to {checkpoint_path}")
-
-        if (epoch + 1) % 1 == 0:
-            checkpoint_path = output_path / f"checkpoint_epoch_{epoch + 1}"
-            checkpoint_path.mkdir(exist_ok=True)
-
-            moe_model.save_pretrained(checkpoint_path)
-            tokenizer.save_pretrained(checkpoint_path)
-
-            torch.save(
-                {
-                    "moe_config": moe_config,
-                    "training_config": training_config,
-                    "epoch": epoch,
-                    "train_loss": train_loss,
-                    "val_loss": val_loss,
-                    "optimizer_state": optimizer.state_dict(),
-                    "scheduler_state": scheduler.state_dict(),
-                },
-                checkpoint_path / "training_state.pt",
-            )
-
-            logger.info(f"Saved checkpoint to {checkpoint_path}")
 
     logger.info("Training completed!")
     logger.info(f"Best validation loss: {best_val_loss:.4f}")

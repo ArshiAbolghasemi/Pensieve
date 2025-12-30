@@ -3,7 +3,7 @@ from typing import Literal
 
 
 @dataclass
-class MoELoRAConfig:
+class MoLELoRAConfig:
     r: int
     num_experts: int
     top_k: int

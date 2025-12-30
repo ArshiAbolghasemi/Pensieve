@@ -21,11 +21,9 @@ def svd_router_initialization(
         torch.Tensor: Router matrix of shape [num_experts, in_dim] (matches nn.Linear weight format).
 
     """
-    # Extract weight if nn.Linear
     if isinstance(weights, nn.Linear):
         weight = weights.weight.data
 
-        # bitsandbytes 4-bit dequantization
         if (
             hasattr(weights.weight, "quant_state")
             and weights.weight.quant_state is not None
@@ -34,20 +32,16 @@ def svd_router_initialization(
                 weight, quant_state=weights.weight.quant_state
             )
 
-        # torch quantized tensor
         elif weight.dtype in [torch.qint8, torch.quint8, torch.qint32]:
             weight = torch.dequantize(weight)
     else:
         weight = weights
 
-    # Ensure weight is a tensor
     if not isinstance(weight, torch.Tensor):
         raise TypeError(f"Expected torch.Tensor or nn.Linear, got {type(weight)}")
 
-    # Convert to float32 for SVD stability
     weight = weight.to(torch.float32)
 
-    # Perform SVD (CPU fallback if CUDA fails)
     try:
         U, S, Vh = torch.linalg.svd(weight, full_matrices=False)
     except RuntimeError as e:
@@ -58,22 +52,15 @@ def svd_router_initialization(
         S = S.to(weight.device)
         Vh = Vh.to(weight.device)
 
-    # Use right singular vectors (Vh rows correspond to input space directions)
-    # Vh has shape [min(out_features, in_features), in_features]
-    # We need [num_experts, in_dim]
-
-    # Crop to match desired number of experts
     rows = min(num_experts, Vh.shape[0])
     R = Vh[:rows, :] * S[:rows].sqrt().unsqueeze(1)
 
-    # If num_experts > available rows, pad with zeros
     if num_experts > R.shape[0]:
         pad = torch.zeros(
             num_experts - R.shape[0], R.shape[1], device=R.device, dtype=R.dtype
         )
         R = torch.cat([R, pad], dim=0)
 
-    # Ensure correct input dimension
     if R.shape[1] != in_dim:
         if R.shape[1] > in_dim:
             R = R[:, :in_dim]
