@@ -21,7 +21,7 @@ def load_base_model(model_name: str, device: str) -> PreTrainedModel:
     logger.info(f"Loading base model: {model_name}")
     return get_model(
         model_name=model_name,
-        load_in_4bit=False,
+        load_in_4bit=True,
         torch_dtype=torch.bfloat16,
         use_flash_attention=False,
         device_map=device,
@@ -37,7 +37,7 @@ def load_lora_model(
     logger.info(f"Loading LoRA model from: {checkpoint_path}")
     base_model = get_model(
         model_name=model_name,
-        load_in_4bit=False,
+        load_in_4bit=True,
         torch_dtype=torch.bfloat16,
         use_flash_attention=False,
     )
@@ -56,7 +56,7 @@ def load_moe_model(
 
     base_model = get_model(
         model_name=model_name,
-        load_in_4bit=False,
+        load_in_4bit=True,
         torch_dtype=torch.bfloat16,
         use_flash_attention=False,
     )
