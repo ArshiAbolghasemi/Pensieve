@@ -61,7 +61,9 @@ def load_moe_model(
         use_flash_attention=False,
     )
 
-    checkpoint = torch.load(Path(checkpoint_path) / "moe_adapter.pt")
+    checkpoint = torch.load(
+        Path(checkpoint_path) / "moe_adapter.pt", map_location=device, weights_only=False
+    )
     moe_config = checkpoint["config"]
 
     moe_model = MoELoRAModel(base_model, moe_config)
