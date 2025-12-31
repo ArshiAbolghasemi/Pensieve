@@ -46,7 +46,8 @@ def main():
         use_flash_attention=args.use_flash_attention,
     )
 
-    output_path = Path(training_config.output_dir)
+    normalized_model_name = args.model_name.replace("/", "_")
+    output_path = Path(normalized_model_name, training_config.output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
 
     logger.info("=" * 80)
