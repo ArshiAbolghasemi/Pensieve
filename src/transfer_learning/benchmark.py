@@ -3,12 +3,12 @@ from pathlib import Path
 
 import torch
 from peft import PeftModel
-from transfer_learning.evaluate import BenchmarkEvaluator
 from transformers import PreTrainedModel
 
 from config.args import get_benchmark_arg_parser
 from mole.model import MoELoRAModel
 from service.model import get_model, get_tokenizer
+from transfer_learning.evaluate import BenchmarkEvaluator
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
