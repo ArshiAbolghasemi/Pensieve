@@ -3,7 +3,7 @@ from pathlib import Path
 
 import torch
 from peft import PeftModel
-from transfer_learingin.evaluate import BenchmarkEvaluator
+from transfer_learning.evaluate import BenchmarkEvaluator
 from transformers import PreTrainedModel
 
 from config.args import get_benchmark_arg_parser
