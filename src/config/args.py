@@ -123,5 +123,22 @@ def get_benchmark_arg_parser() -> argparse.ArgumentParser:
         default="cuda",
         help="Device to run evaluation on",
     )
-
+    parser.add_argument(
+        "--skip_base",
+        action="store_true",
+        default=False,
+        help="Skip base model evaluation",
+    )
+    parser.add_argument(
+        "--skip_lora",
+        action="store_true",
+        default=False,
+        help="Skip single LoRA model evaluation",
+    )
+    parser.add_argument(
+        "--skip_moe",
+        action="store_true",
+        default=False,
+        help="Skip MoE model evaluation",
+    )
     return parser

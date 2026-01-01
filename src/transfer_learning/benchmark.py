@@ -70,13 +70,11 @@ def load_moe_model(
 
     for layer_name, state_dict in checkpoint["moe_layers"].items():
         if layer_name in moe_model.moe_layers:
-            moe_model.moe_layers[layer_name].load_state_dict(state_dict)
-
-        adapter_state = {
-            k: v for k, v in state_dict.items() if not k.startswith("base_layer.")
-        }
-        moe_model.moe_layers[layer_name].load_state_dict(adapter_state, strict=False)
-        logger.info(f"Loaded MoE layer: {layer_name}")
+            adapter_state = {
+                k: v for k, v in state_dict.items() if not k.startswith("base_layer.")
+            }
+            moe_model.moe_layers[layer_name].load_state_dict(adapter_state, strict=False)
+            logger.info(f"Loaded MoE layer: {layer_name}")
 
     return moe_model.to(device)
 
@@ -121,38 +119,47 @@ def main():
 
     all_results = {}
 
-    logger.info("\n" + "=" * 50)
-    logger.info("EVALUATING BASE MODEL")
-    logger.info("=" * 50)
+    if not args.skip_base:
+        logger.info("\n" + "=" * 50)
+        logger.info("EVALUATING BASE MODEL")
+        logger.info("=" * 50)
+        base_model = load_base_model(args.model_name, args.device)
+        base_evaluator = BenchmarkEvaluator(
+            base_model, tokenizer, args.device, args.batch_size
+        )
+        all_results["base"] = base_evaluator.run_all_benchmarks()
+        del base_model
+        torch.cuda.empty_cache()
+    else:
+        logger.info("Skipping base model evaluation")
 
-    base_model = load_base_model(args.model_name, args.device)
-    base_evaluator = BenchmarkEvaluator(base_model, tokenizer, args.device, args.batch_size)
-    all_results["base"] = base_evaluator.run_all_benchmarks()
+    if not args.skip_lora:
+        logger.info("\n" + "=" * 50)
+        logger.info("EVALUATING SINGLE LORA MODEL")
+        logger.info("=" * 50)
+        lora_model = load_lora_model(args.model_name, args.lora_checkpoint, args.device)
+        lora_evaluator = BenchmarkEvaluator(
+            lora_model, tokenizer, args.device, args.batch_size
+        )
+        all_results["lora"] = lora_evaluator.run_all_benchmarks()
+        del lora_model
+        torch.cuda.empty_cache()
+    else:
+        logger.info("Skipping LoRA model evaluation")
 
-    del base_model
-    torch.cuda.empty_cache()
-
-    logger.info("\n" + "=" * 50)
-    logger.info("EVALUATING SINGLE LORA MODEL")
-    logger.info("=" * 50)
-
-    lora_model = load_lora_model(args.model_name, args.lora_checkpoint, args.device)
-    lora_evaluator = BenchmarkEvaluator(lora_model, tokenizer, args.device, args.batch_size)
-    all_results["lora"] = lora_evaluator.run_all_benchmarks()
-
-    del lora_model
-    torch.cuda.empty_cache()
-
-    logger.info("\n" + "=" * 50)
-    logger.info("EVALUATING MOE MODEL")
-    logger.info("=" * 50)
-
-    moe_model = load_moe_model(args.model_name, args.moe_checkpoint, args.device)
-    moe_evaluator = BenchmarkEvaluator(moe_model, tokenizer, args.device, args.batch_size)
-    all_results["moe"] = moe_evaluator.run_all_benchmarks()
-
-    del moe_model
-    torch.cuda.empty_cache()
+    if not args.skip_moe:
+        logger.info("\n" + "=" * 50)
+        logger.info("EVALUATING MOE MODEL")
+        logger.info("=" * 50)
+        moe_model = load_moe_model(args.model_name, args.moe_checkpoint, args.device)
+        moe_evaluator = BenchmarkEvaluator(
+            moe_model, tokenizer, args.device, args.batch_size
+        )
+        all_results["moe"] = moe_evaluator.run_all_benchmarks()
+        del moe_model
+        torch.cuda.empty_cache()
+    else:
+        logger.info("Skipping MoE model evaluation")
 
     print_results_table(all_results)
 
