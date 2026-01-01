@@ -72,6 +72,12 @@ def load_moe_model(
         if layer_name in moe_model.moe_layers:
             moe_model.moe_layers[layer_name].load_state_dict(state_dict)
 
+        adapter_state = {
+            k: v for k, v in state_dict.items() if not k.startswith("base_layer.")
+        }
+        moe_model.moe_layers[layer_name].load_state_dict(adapter_state, strict=False)
+        logger.info(f"Loaded MoE layer: {layer_name}")
+
     return moe_model.to(device)
 
 
