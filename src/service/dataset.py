@@ -2,7 +2,7 @@ import logging
 from copy import copy
 from typing import cast
 
-from datasets import Dataset, DatasetDict, load_dataset
+from datasets import Dataset, DatasetDict, concatenate_datasets, load_dataset
 from torch.utils.data import DataLoader
 from torch.utils.data import Dataset as TorchDataset
 from transformers import (
@@ -35,15 +35,14 @@ def sample_flan_dataset(
     tokenizer: PreTrainedTokenizerBase, samples_per_task: int = 200
 ) -> dict[str, Dataset]:
     """Load the FLAN dataset and sample a fixed number of examples per task.
-
     Format the dataset for conversational SFT training using a chat template.
 
     Args:
-        samples_per_task (int): Number of samples per task.
+        samples_per_task (int): Number of samples per task for training.
         tokenizer: Tokenizer object with `apply_chat_template` method.
 
     Returns:
-        dict: {"train": Dataset, "validation": Dataset or None}
+        dict: {"train": Dataset, "validation": Dataset}
 
     """
     logger.info("Loading FLAN dataset...")
@@ -59,7 +58,7 @@ def sample_flan_dataset(
         msg = "validation samples are missed"
         raise ValueError(msg)
 
-    expected_cols = {"source", "target"}
+    expected_cols = {"source", "target", "task_name"}
     actual_cols = set(dataset["train"].column_names)
     if not expected_cols.issubset(actual_cols):
         msg = (
@@ -68,39 +67,55 @@ def sample_flan_dataset(
         )
         raise ValueError(msg)
 
-    logger.info(
-        "Dataset has %s columns. Formatting for conversational SFT...", expected_cols
-    )
+    logger.info("Sampling %d examples per task for training...", samples_per_task)
 
-    dataset_fmt = dataset.rename_columns(
-        {"source": "prompt", "target": "completion"}
-    ).select_columns(["prompt", "completion"])
+    train_dataset = dataset["train"]
+    task_names = train_dataset.unique("task_name")
+    logger.info(f"Found {len(task_names)} unique tasks in training data")
+
+    sampled_train_data = []
+    for task_name in task_names:
+        task_data = train_dataset.filter(lambda x: x["task_name"] == task_name)
+
+        n_samples = min(samples_per_task, len(task_data))
+        task_samples = task_data.shuffle(seed=42).select(range(n_samples))
+
+        sampled_train_data.append(task_samples)
+        logger.info(f"Task '{task_name}': sampled {n_samples} examples")
+
+    sampled_train = concatenate_datasets(sampled_train_data).shuffle(seed=42)
+
+    logger.info(f"Total training samples after sampling: {len(sampled_train)}")
+
+    sampled_val = dataset["validation"]
+    logger.info(f"Using all validation samples: {len(sampled_val)}")
 
     logger.info("Formatting dataset with chat template...")
 
-    dataset_fmt = dataset_fmt.map(
+    dataset_fmt_train = sampled_train.rename_columns(
+        {"source": "prompt", "target": "completion"}
+    ).select_columns(["prompt", "completion"])
+
+    dataset_fmt_val = sampled_val.rename_columns(
+        {"source": "prompt", "target": "completion"}
+    ).select_columns(["prompt", "completion"])
+
+    dataset_fmt_train = dataset_fmt_train.map(
         lambda example: _format_with_chat_template(tokenizer, example),
-        remove_columns=dataset_fmt["train"].column_names,
+        remove_columns=dataset_fmt_train.column_names,
     )
 
-    sampled_train = (
-        dataset_fmt["train"]
-        .shuffle(seed=42)
-        .select(range(min(samples_per_task, len(dataset_fmt["train"]))))
-    )
-    sampled_val = (
-        dataset_fmt["validation"]
-        .shuffle(seed=42)
-        .select(range(min(samples_per_task, len(dataset_fmt["validation"]))))
+    dataset_fmt_val = dataset_fmt_val.map(
+        lambda example: _format_with_chat_template(tokenizer, example),
+        remove_columns=dataset_fmt_val.column_names,
     )
 
-    logger.info("Training dataset prepared with %d samples", len(sampled_train))
-    logger.info("Validation dataset prepared with %d samples", len(sampled_val))
-
+    logger.info("Training dataset prepared with %d samples", len(dataset_fmt_train))
+    logger.info("Validation dataset prepared with %d samples", len(dataset_fmt_val))
     logger.info("Sample entry (first 200 chars):")
-    logger.info("  - text: %s...", sampled_train[0]["text"][:200])
+    logger.info("  - text: %s...", dataset_fmt_train[0]["text"][:200])
 
-    return {"train": sampled_train, "validation": sampled_val}
+    return {"train": dataset_fmt_train, "validation": dataset_fmt_val}
 
 
 def _tokenize_for_causal_lm(
