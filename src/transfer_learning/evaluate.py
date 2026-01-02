@@ -222,7 +222,7 @@ class BenchmarkEvaluator:
             return int(row["answer"]) - 1
         if dataset_name == "boolq":
             # label True=1 maps to index 0 (Yes), label False=0 maps to index 1 (No)
-            return 0 if row["label"] else 1
+            return 0 if row["answer"] else 1
         if dataset_name == "openbookqa":
             return row["choices"]["label"].index(row["answerKey"])
         if dataset_name == "hellaswag":
