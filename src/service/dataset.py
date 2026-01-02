@@ -32,13 +32,13 @@ def _format_with_chat_template(
 
 
 def sample_flan_dataset(
-    tokenizer: PreTrainedTokenizerBase, samples_per_task: int = 200
+    tokenizer: PreTrainedTokenizerBase, sample_ratio: float = 0.2
 ) -> dict[str, Dataset]:
-    """Load the FLAN dataset and sample a fixed number of examples per task.
+    """Load the FLAN dataset and sample a percentage of examples per task.
     Format the dataset for conversational SFT training using a chat template.
 
     Args:
-        samples_per_task (int): Number of samples per task for training.
+        sample_ratio (float): Ratio of samples to use per task (0.0 to 1.0). Default 0.2 (20%).
         tokenizer: Tokenizer object with `apply_chat_template` method.
 
     Returns:
@@ -67,25 +67,39 @@ def sample_flan_dataset(
         )
         raise ValueError(msg)
 
-    logger.info("Sampling %d examples per task for training...", samples_per_task)
+    logger.info(f"Sampling {sample_ratio * 100:.0f}% of examples per task for training...")
 
     train_dataset = dataset["train"]
     task_names = train_dataset.unique("task_name")
     logger.info(f"Found {len(task_names)} unique tasks in training data")
 
     sampled_train_data = []
+    total_available = 0
+    total_sampled = 0
+
     for task_name in task_names:
         task_data = train_dataset.filter(lambda x: x["task_name"] == task_name)
+        task_size = len(task_data)
 
-        n_samples = min(samples_per_task, len(task_data))
+        n_samples = max(1, int(task_size * sample_ratio))
+
         task_samples = task_data.shuffle(seed=42).select(range(n_samples))
-
         sampled_train_data.append(task_samples)
-        logger.info(f"Task '{task_name}': sampled {n_samples} examples")
+
+        total_available += task_size
+        total_sampled += n_samples
+
+        logger.info(
+            f"Task '{task_name}': sampled {n_samples}/{task_size} examples "
+            f"({n_samples / task_size * 100:.1f}%)"
+        )
 
     sampled_train = concatenate_datasets(sampled_train_data).shuffle(seed=42)
 
-    logger.info(f"Total training samples after sampling: {len(sampled_train)}")
+    logger.info(
+        f"Total training samples: {len(sampled_train)}/{total_available} "
+        f"({len(sampled_train) / total_available * 100:.1f}%)"
+    )
 
     sampled_val = dataset["validation"]
     logger.info(f"Using all validation samples: {len(sampled_val)}")
