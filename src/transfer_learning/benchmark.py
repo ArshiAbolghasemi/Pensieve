@@ -19,13 +19,19 @@ logger = logging.getLogger(__name__)
 def load_base_model(model_name: str, device: str) -> PreTrainedModel:
     """Load base model without any adapters."""
     logger.info(f"Loading base model: {model_name}")
-    return get_model(
+    model = get_model(
         model_name=model_name,
         load_in_4bit=True,
         torch_dtype=torch.bfloat16,
         use_flash_attention=False,
         device_map=device,
     )
+
+    # Disable cache to avoid DynamicCache compatibility issues
+    if hasattr(model, "config"):
+        model.config.use_cache = False
+
+    return model
 
 
 def load_lora_model(
@@ -41,6 +47,10 @@ def load_lora_model(
         torch_dtype=torch.bfloat16,
         use_flash_attention=False,
     )
+
+    # Disable cache to avoid DynamicCache compatibility issues
+    if hasattr(base_model, "config"):
+        base_model.config.use_cache = False
 
     model = PeftModel.from_pretrained(base_model, checkpoint_path)
     return model.to(device)
@@ -60,6 +70,10 @@ def load_moe_model(
         torch_dtype=torch.bfloat16,
         use_flash_attention=False,
     )
+
+    # Disable cache to avoid DynamicCache compatibility issues
+    if hasattr(base_model, "config"):
+        base_model.config.use_cache = False
 
     checkpoint = torch.load(
         Path(checkpoint_path) / "moe_adapter.pt", map_location=device, weights_only=False

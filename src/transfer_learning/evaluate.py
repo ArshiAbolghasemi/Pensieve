@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 
 class BenchmarkEvaluator:
-    """Evaluator for multiple choice benchmarks."""
+    """Evaluator for multiple choice benchmarks using masked token loss."""
 
     def __init__(
         self,
@@ -24,24 +24,30 @@ class BenchmarkEvaluator:
         tokenizer: PreTrainedTokenizer,
         device: str = "cuda",
         batch_size: int = 8,
+        max_length: int = 512,
     ):
         self.model = model
         self.tokenizer = tokenizer
         self.device = device
         self.batch_size = batch_size
+        self.max_length = max_length
         self.model.eval()
+
+        # Disable cache to avoid DynamicCache compatibility issues
+        if hasattr(self.model, "config"):
+            self.model.config.use_cache = False
 
     def evaluate_arc_challenge(self) -> float:
         """Evaluate on ARC-Challenge dataset."""
         logger.info("Evaluating ARC-Challenge...")
         dataset = cast("Dataset", load_dataset("ai2_arc", "ARC-Challenge", split="test"))
-        return self._evaluate_arc_style(dataset)
+        return self._evaluate_dataset(dataset, "arc-challenge")
 
     def evaluate_arc_easy(self) -> float:
         """Evaluate on ARC-Easy dataset."""
         logger.info("Evaluating ARC-Easy...")
         dataset = cast("Dataset", load_dataset("ai2_arc", "ARC-Easy", split="test"))
-        return self._evaluate_arc_style(dataset)
+        return self._evaluate_dataset(dataset, "arc-easy")
 
     def evaluate_winogrande(self) -> float:
         """Evaluate on Winogrande dataset."""
@@ -49,183 +55,208 @@ class BenchmarkEvaluator:
         dataset = cast(
             "Dataset", load_dataset("winogrande", "winogrande_xl", split="validation")
         )
-
-        correct = 0
-        total = 0
-
-        for i in tqdm(range(0, dataset.num_rows, self.batch_size), desc="Winogrande"):
-            batch = dataset[i : i + self.batch_size]
-
-            for sentence, option1, option2, answer in zip(
-                batch["sentence"], batch["option1"], batch["option2"], batch["answer"]
-            ):
-                text1 = sentence.replace("_", option1)
-                text2 = sentence.replace("_", option2)
-
-                ppl1 = self._calculate_perplexity(text1)
-                ppl2 = self._calculate_perplexity(text2)
-
-                predicted = "1" if ppl1 < ppl2 else "2"
-
-                if predicted == answer:
-                    correct += 1
-                total += 1
-
-        accuracy = correct / total if total > 0 else 0.0
-        logger.info(f"Winogrande Accuracy: {accuracy:.4f}")
-        return accuracy
+        return self._evaluate_dataset(dataset, "winogrande")
 
     def evaluate_boolq(self) -> float:
         """Evaluate on BoolQ dataset."""
         logger.info("Evaluating BoolQ...")
         dataset = cast("Dataset", load_dataset("boolq", split="validation"))
-
-        correct = 0
-        total = 0
-
-        for i in tqdm(range(0, dataset.num_rows, self.batch_size), desc="BoolQ"):
-            batch = dataset[i : i + self.batch_size]
-
-            for passage, question, answer in zip(
-                batch["passage"], batch["question"], batch["answer"]
-            ):
-                prompt = f"Passage: {passage}\nQuestion: {question}\nAnswer:"
-
-                yes_prob = self._get_token_probability(prompt, " Yes")
-                no_prob = self._get_token_probability(prompt, " No")
-
-                predicted = yes_prob > no_prob
-
-                if predicted == answer:
-                    correct += 1
-                total += 1
-
-        accuracy = correct / total if total > 0 else 0.0
-        logger.info(f"BoolQ Accuracy: {accuracy:.4f}")
-        return accuracy
+        return self._evaluate_dataset(dataset, "boolq")
 
     def evaluate_openbookqa(self) -> float:
         """Evaluate on OpenBookQA dataset."""
         logger.info("Evaluating OpenBookQA...")
         dataset = cast("Dataset", load_dataset("openbookqa", "main", split="test"))
-
-        correct = 0
-        total = 0
-
-        for i in tqdm(range(0, dataset.num_rows, self.batch_size), desc="OpenBookQA"):
-            batch = dataset[i : i + self.batch_size]
-
-            for question_stem, choices, answer_key in zip(
-                batch["question_stem"], batch["choices"], batch["answerKey"]
-            ):
-                question = question_stem
-                options = choices["text"]
-                labels = choices["label"]
-
-                perplexities = []
-                for option in options:
-                    prompt = f"Question: {question}\nAnswer: {option}"
-                    ppl = self._calculate_perplexity(prompt)
-                    perplexities.append(ppl)
-
-                predicted_idx = perplexities.index(min(perplexities))
-                predicted_label = labels[predicted_idx]
-
-                if predicted_label == answer_key:
-                    correct += 1
-                total += 1
-
-        accuracy = correct / total if total > 0 else 0.0
-        logger.info(f"OpenBookQA Accuracy: {accuracy:.4f}")
-        return accuracy
+        return self._evaluate_dataset(dataset, "openbookqa")
 
     def evaluate_hellaswag(self) -> float:
         """Evaluate on HellaSwag dataset."""
         logger.info("Evaluating HellaSwag...")
         dataset = cast("Dataset", load_dataset("hellaswag", split="validation"))
+        return self._evaluate_dataset(dataset, "hellaswag")
 
-        correct = 0
-        total = 0
+    def _evaluate_dataset(self, dataset: Dataset, dataset_name: str) -> float:
+        """Evaluate dataset using batched masked token loss approach."""
+        labels = []
+        predictions = []
 
-        for i in tqdm(range(0, dataset.num_rows, self.batch_size), desc="HellaSwag"):
-            batch = dataset[i : i + self.batch_size]
+        for start in tqdm(
+            range(0, len(dataset), self.batch_size),
+            total=(len(dataset) + self.batch_size - 1) // self.batch_size,
+            desc=f"Evaluating {dataset_name}",
+        ):
+            rows = [
+                dataset[i] for i in range(start, min(start + self.batch_size, len(dataset)))
+            ]
 
-            for ctx, endings, label in zip(batch["ctx"], batch["endings"], batch["label"]):
-                perplexities = []
-                for ending in endings:
-                    full_text = ctx + " " + ending
-                    ppl = self._calculate_perplexity(full_text)
-                    perplexities.append(ppl)
+            # Build the flattened option texts for this batch
+            all_texts = []
+            options_per_sample = []
+            ctx_lens_per_option = []
 
-                predicted_idx = perplexities.index(min(perplexities))
+            for row in rows:
+                # Get formatted options using chat template
+                options = self._create_multi_choice_options(row, dataset_name)
+                options_per_sample.append(len(options))
 
-                if predicted_idx == int(label):
-                    correct += 1
-                total += 1
+                # Compute context length
+                content = self._extract_input_content(row, dataset_name)
+                messages = [{"role": "user", "content": content}]
+                context_prompt = self.tokenizer.apply_chat_template(
+                    messages,
+                    tokenize=False,
+                    add_generation_prompt=True,
+                )
+                ctx_len = len(self.tokenizer.encode(context_prompt)) - 1
 
-        accuracy = correct / total if total > 0 else 0.0
-        logger.info(f"HellaSwag Accuracy: {accuracy:.4f}")
-        return accuracy
+                all_texts.extend(options)
+                ctx_lens_per_option.extend([ctx_len] * len(options))
 
-    def _evaluate_arc_style(self, dataset: Dataset) -> float:
-        """Helper function for ARC-style datasets."""
-        correct = 0
-        total = 0
+                # Collect gold label
+                labels.append(self._extract_target_index(row, dataset_name))
 
-        for i in tqdm(range(0, dataset.num_rows, self.batch_size), desc="ARC"):
-            batch = dataset[i : i + self.batch_size]
-
-            for question, choices, answer_key in zip(
-                batch["question"], batch["choices"], batch["answerKey"]
-            ):
-                options = choices["text"]
-                labels = choices["label"]
-
-                perplexities = []
-                for option in options:
-                    prompt = f"Question: {question}\nAnswer: {option}"
-                    ppl = self._calculate_perplexity(prompt)
-                    perplexities.append(ppl)
-
-                predicted_idx = perplexities.index(min(perplexities))
-                predicted_label = labels[predicted_idx]
-
-                if predicted_label == answer_key:
-                    correct += 1
-                total += 1
-
-        accuracy = correct / total if total > 0 else 0.0
-        return accuracy
-
-    def _calculate_perplexity(self, text: str) -> float:
-        """Calculate perplexity for a given text."""
-        with torch.no_grad():
-            inputs = self.tokenizer(
-                text,
+            # Tokenize all options in one go
+            tokenized = self.tokenizer(
+                all_texts,
                 return_tensors="pt",
+                padding=True,
                 truncation=True,
-                max_length=512,
-            ).to(self.device)
+                max_length=self.max_length,
+            )
+            tokenized = {k: v.to(self.device) for k, v in tokenized.items()}
 
-            outputs = self.model(**inputs, labels=inputs["input_ids"])
-            loss = outputs.loss
-            perplexity = torch.exp(loss).item()
+            # Create masked labels: ignore context and padding
+            masked_labels = tokenized["input_ids"].clone()
+            for i, ctx_len in enumerate(ctx_lens_per_option):
+                masked_labels[i, :ctx_len] = -100
+            masked_labels[tokenized["attention_mask"] == 0] = -100
 
-        return perplexity
+            with torch.no_grad():
+                logits = self.model(
+                    input_ids=tokenized["input_ids"],
+                    attention_mask=tokenized["attention_mask"],
+                    use_cache=False,
+                ).logits
 
-    def _get_token_probability(self, prompt: str, token: str) -> float:
-        """Get probability of a specific token following a prompt."""
-        with torch.no_grad():
-            inputs = self.tokenizer(prompt, return_tensors="pt").to(self.device)
-            outputs = self.model(**inputs)
+                # Compute per-sequence losses
+                losses = (
+                    self._compute_loglike_loss(logits, masked_labels, reduction="none")
+                    .detach()
+                    .cpu()
+                )
 
-            last_logits = outputs.logits[0, -1, :]
-            probs = torch.softmax(last_logits, dim=-1)
+            # Reduce per sample (argmin across its options)
+            idx = 0
+            for n_opt in options_per_sample:
+                pred = torch.argmin(losses[idx : idx + n_opt]).item()
+                predictions.append(pred)
+                idx += n_opt
 
-            token_id = self.tokenizer.encode(token, add_special_tokens=False)[0]
-            token_prob = probs[token_id].item()
+        # Calculate accuracy
+        correct = sum(1 for pred, label in zip(predictions, labels) if pred == label)
+        accuracy = correct / len(labels) if len(labels) > 0 else 0.0
+        logger.info(f"{dataset_name} Accuracy: {accuracy:.4f}")
+        return accuracy
 
-        return token_prob
+    def _extract_input_content(self, row, dataset_name: str) -> str:
+        """Extract the input content/question from a dataset row."""
+        if dataset_name in ["arc-challenge", "arc-easy"]:
+            return f"Given the question: {row['question']}"
+        if dataset_name == "winogrande":
+            return f"Given the text: {row['sentence']}"
+        if dataset_name == "boolq":
+            return f"Passage: {row['passage']}\nQuestion: {row['question']}\nAnswer (True or False)?"
+        if dataset_name == "openbookqa":
+            return row["question_stem"]
+        if dataset_name == "hellaswag":
+            return row["ctx"]
+        raise ValueError(f"Unknown dataset: {dataset_name}")
+
+    def _get_verbalizer_choices(self, row, dataset_name: str) -> list[str] | None:
+        """Get natural language verbalizers for classification tasks."""
+        if dataset_name == "boolq":
+            return ["Yes, that is true.", "No, that is false."]
+        if dataset_name == "winogrande":
+            return [
+                f"{row['option1']} is the right choice for the placeholder _",
+                f"{row['option2']} is the right choice for the placeholder _",
+            ]
+        if dataset_name in ["arc-challenge", "arc-easy"] or dataset_name == "openbookqa":
+            return [f"The right answer is: {choice}" for choice in row["choices"]["text"]]
+        if dataset_name == "hellaswag":
+            return [f"{ending} is the correct continuation." for ending in row["endings"]]
+
+        return None
+
+    def _create_multi_choice_options(self, row, dataset_name: str) -> list[str]:
+        """Create multi-choice options using the model's chat template."""
+        options_texts = []
+        content = self._extract_input_content(row, dataset_name)
+
+        # Get natural verbalizer choices
+        choices = self._get_verbalizer_choices(row, dataset_name)
+
+        if choices is None:
+            raise ValueError(f"No verbalizer defined for dataset: {dataset_name}")
+
+        for choice in choices:
+            # Use tokenizer's chat template to format the conversation
+            messages = [
+                {"role": "user", "content": content},
+                {"role": "assistant", "content": choice},
+            ]
+            formatted_text = self.tokenizer.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=False,
+            )
+            options_texts.append(formatted_text)
+
+        return options_texts
+
+    def _extract_target_index(self, row, dataset_name: str) -> int:
+        """Extract the correct answer index from a dataset row."""
+        if dataset_name in ["arc-challenge", "arc-easy"]:
+            return row["choices"]["label"].index(row["answerKey"])
+        if dataset_name == "winogrande":
+            return int(row["answer"]) - 1
+        if dataset_name == "boolq":
+            # label True=1 maps to index 0 (Yes), label False=0 maps to index 1 (No)
+            return 0 if row["label"] else 1
+        if dataset_name == "openbookqa":
+            return row["choices"]["label"].index(row["answerKey"])
+        if dataset_name == "hellaswag":
+            return int(row["label"])
+        raise ValueError(f"Unknown dataset: {dataset_name}")
+
+    def _compute_loglike_loss(
+        self, logits: torch.Tensor, labels: torch.Tensor, reduction: str = "none"
+    ) -> torch.Tensor:
+        """Compute log-likelihood loss with optional masking."""
+        bs = logits.size(0)
+        vocab_size = logits.size(-1)
+        labels = labels.squeeze(-1)
+
+        # Shift for autoregressive prediction
+        shift_logits = logits[..., :-1, :].contiguous()
+        shift_labels = labels[..., 1:].contiguous()
+
+        # Flatten the tokens
+        loss_fct = torch.nn.CrossEntropyLoss(reduction=reduction)
+        shift_logits = shift_logits.view(-1, vocab_size)
+        shift_labels = shift_labels.view(-1)
+
+        shift_labels = shift_labels.to(shift_logits.device)
+        loss = loss_fct(shift_logits, shift_labels)
+
+        # Reshape back and compute average per sequence
+        if reduction == "none":
+            loss = loss.view((bs, -1))
+            non_zero_loss = (loss != 0).sum(dim=-1)
+            non_zero_loss[non_zero_loss == 0] = 1
+            loss = loss.sum(dim=-1) / non_zero_loss
+
+        return loss.float()
 
     def run_all_benchmarks(self) -> dict[str, float]:
         """Run all benchmark evaluations."""
