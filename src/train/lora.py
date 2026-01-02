@@ -38,7 +38,6 @@ def main():
         gradient_accumulation_steps=args.gradient_accumulation_steps,
         learning_rate=args.learning_rate,
         max_length=args.max_length,
-        samples_per_task=args.samples_per_task,
         warmup_steps=args.warmup_steps,
         load_in_4bit=args.load_in_4bit,
         use_flash_attention=args.use_flash_attention,

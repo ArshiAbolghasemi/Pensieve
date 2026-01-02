@@ -164,9 +164,7 @@ def create_dataloaders(
     """
     logger.info("Loading and preparing dataset...")
 
-    datasets = sample_flan_dataset(
-        tokenizer=tokenizer, samples_per_task=config.samples_per_task
-    )
+    datasets = sample_flan_dataset(tokenizer=tokenizer)
 
     train_dataset = datasets["train"]
     val_dataset = datasets["validation"]

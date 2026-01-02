@@ -70,12 +70,6 @@ def get_train_args_parser() -> argparse.ArgumentParser:
         "--max_length", type=int, default=512, help="Maximum sequence length"
     )
     parser.add_argument(
-        "--samples_per_task",
-        type=int,
-        default=500,
-        help="Number of samples per task from FLAN dataset",
-    )
-    parser.add_argument(
         "--warmup_steps",
         type=int,
         default=100,

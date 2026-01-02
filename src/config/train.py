@@ -12,7 +12,6 @@ class TrainingConfig:
     gradient_accumulation_steps: int = 4
     learning_rate: float = 2e-4
     max_length: int = 512
-    samples_per_task: int = 500
     warmup_steps: int = 100
     logging_steps: int = 10
     save_steps: int = 500
