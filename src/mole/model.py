@@ -291,8 +291,6 @@ class MoELoRALayer(nn.Module):
         topk_probs, topk_indices = torch.topk(router_probs, self.top_k, dim=-1)
         topk_probs = topk_probs / topk_probs.sum(dim=-1, keepdim=True)
 
-        # CRITICAL FIX: Detach before caching to prevent backward graph errors
-        # We only need the indices for diversity loss computation, not gradients through routing
         self.last_topk_indices = topk_indices.detach()
 
         # Expert outputs are only used for metrics (PES), compute without gradients
