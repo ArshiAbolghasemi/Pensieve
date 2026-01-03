@@ -291,14 +291,19 @@ class MoELoRALayer(nn.Module):
         topk_probs, topk_indices = torch.topk(router_probs, self.top_k, dim=-1)
         topk_probs = topk_probs / topk_probs.sum(dim=-1, keepdim=True)
 
-        self.last_topk_indices = topk_indices
+        # CRITICAL FIX: Detach before caching to prevent backward graph errors
+        # We only need the indices for diversity loss computation, not gradients through routing
+        self.last_topk_indices = topk_indices.detach()
 
-        self.last_expert_outputs = self.compute_expert_outputs(x_flat)
+        # Expert outputs are only used for metrics (PES), compute without gradients
+        with torch.no_grad():
+            self.last_expert_outputs = self.compute_expert_outputs(x_flat)
 
         expert_output = torch.zeros(
             x_flat.shape[0], self.out_features, device=x.device, dtype=x.dtype
         )
 
+        # Note: Use original topk_indices (with gradients) for actual forward computation
         for k_idx in range(self.top_k):
             expert_idx = topk_indices[:, k_idx]
             expert_weight = topk_probs[:, k_idx : k_idx + 1]
@@ -378,12 +383,9 @@ class MoELoRAModel(nn.Module):
     def compute_total_diversity_loss(self) -> Tensor:
         """Compute total diversity loss across all MoE layers.
 
-        Args:
-            method: 'lowrank' or 'subspace'
-                - 'lowrank': Compares full W_i = B_i @ A_i using trace trick
-                - 'subspace': Compares only input subspaces (A matrices)
-                  Subspace is faster and often better theoretically.
-
+        Returns:
+            Total diversity loss (similarity measure) across all layers.
+            Lower values indicate more diverse experts.
         """
         model_params = list(self.parameters())
         if not model_params:
@@ -419,8 +421,8 @@ class MoELoRAModel(nn.Module):
                 - 'pes_per_layer': Dictionary mapping layer names to their PES values
 
         Note:
-            This requires that forward() was called with compute_pes=True to store
-            expert outputs. The metric considers all experts, not just top-k selected ones.
+            This requires that forward() was called to store expert outputs. 
+            The metric considers all experts, not just top-k selected ones.
 
         """
         layer_pes_values = {}

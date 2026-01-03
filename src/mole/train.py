@@ -19,12 +19,22 @@ def train_epoch(
     gradient_accumulation_steps: int = 1,
     max_grad_norm: float = 1.0,
     logging_steps: int = 10,
-    diversity_loss_weight: float = - 0.01,
+    diversity_loss_weight: float = 0.01,  # FIXED: Use positive weight
     device: str = "cuda",
     epoch: int = 0,
     num_epochs: int = 1,
 ) -> float:
-    """Train for one epoch with diversity regularization."""
+    """Train for one epoch with diversity regularization.
+
+    The diversity loss measures cosine similarity between selected expert pairs.
+    By adding it with a positive weight, gradient descent will minimize it,
+    which minimizes similarity and thus maximizes diversity.
+
+    Args:
+        diversity_loss_weight: Positive weight to penalize similarity (encourage diversity).
+            Typical values: 0.001 - 0.1
+
+    """
     moe_model.train()
     total_loss = 0.0
     total_task_loss = 0.0
@@ -50,8 +60,12 @@ def train_epoch(
 
         task_loss: Tensor = outputs.loss
 
+        # Compute diversity loss (measures similarity between experts)
+        # Uses cached detached indices, so no backward graph errors
         diversity_loss: Tensor = moe_model.compute_total_diversity_loss()
 
+        # Add diversity loss with positive weight
+        # This minimizes similarity → maximizes diversity
         loss = task_loss + diversity_loss_weight * diversity_loss
 
         if gradient_accumulation_steps > 1:
@@ -93,7 +107,8 @@ def train_epoch(
     logger.info("\nEpoch %d Summary:", epoch + 1)
     logger.info("  Total Loss: %.4f", avg_loss)
     logger.info("  Task Loss: %.4f", avg_task_loss)
-    logger.info("  Diversity Loss: %.4f", avg_diversity_loss)
+    logger.info("  Diversity Loss (similarity): %.4f", avg_diversity_loss)
+    logger.info("  (Lower diversity loss = more diverse experts)")
 
     return avg_loss
 
