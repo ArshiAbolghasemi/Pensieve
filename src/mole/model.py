@@ -184,24 +184,22 @@ class MoELoRALayer(nn.Module):
             topk_indices = topk_indices[sample_indices]
             batch_size = max_samples
 
-        # Cache expert norms if not already computed
-        if not hasattr(self, "_cached_expert_norms") or self._cached_expert_norms is None:
-            norms_squared = torch.zeros(self.num_experts, device=device)
+        # Compute expert norms (needed for cosine similarity)
+        # We compute these WITH gradients so they can backprop
+        norms_squared = torch.zeros(self.num_experts, device=device)
 
-            for expert_idx in range(self.num_experts):
-                A_expert = self.lora_A_experts[expert_idx]
-                B_expert = self.lora_B_experts[expert_idx]
-                # ||W||_F^2 = Tr(A^T @ B^T @ B @ A)
-                BtB = torch.matmul(B_expert.transpose(0, 1), B_expert)
-                temp = torch.matmul(BtB, A_expert)
-                norms_squared[expert_idx] = torch.sum(A_expert * temp)
+        for expert_idx in range(self.num_experts):
+            A_expert = self.lora_A_experts[expert_idx]
+            B_expert = self.lora_B_experts[expert_idx]
+            # ||W||_F^2 = Tr(A^T @ B^T @ B @ A)
+            BtB = torch.matmul(B_expert.transpose(0, 1), B_expert)
+            temp = torch.matmul(BtB, A_expert)
+            norms_squared[expert_idx] = torch.sum(A_expert * temp)
 
-            self._cached_expert_norms = torch.sqrt(norms_squared + 1e-8)
-
-        norms = self._cached_expert_norms
+        norms = torch.sqrt(norms_squared + 1e-8)
 
         # Compute similarities for unique expert pairs in this batch
-        total_similarity = torch.tensor(0.0, device=device)
+        total_similarity = torch.tensor(0.0, device=device, requires_grad=True)
         num_comparisons = 0
 
         # Get all unique expert pairs from topk_indices
@@ -227,10 +225,10 @@ class MoELoRALayer(nn.Module):
                     B_j = self.lora_B_experts[expert_j]
 
                     # Compute inner product: <W_i, W_j>_F = Tr(A_i^T @ B_i^T @ B_j @ A_j)
-                    with torch.no_grad():
-                        BiBj = torch.matmul(B_i.transpose(0, 1), B_j)
-                        temp = torch.matmul(BiBj, A_j)
-                        inner_product = torch.sum(A_i * temp)
+                    # This must allow gradients to flow
+                    BiBj = torch.matmul(B_i.transpose(0, 1), B_j)
+                    temp = torch.matmul(BiBj, A_j)
+                    inner_product = torch.sum(A_i * temp)
 
                     # Cosine similarity
                     norm_i = norms[expert_i]
