@@ -153,6 +153,23 @@ class MoELoRALayer(nn.Module):
         return lora_A_params, lora_B_params
 
     def compute_diversity_loss(self, topk_indices: Tensor) -> Tensor:
+        """Compute diversity loss for top-k selected experts with memory-efficient implementation.
+
+        This computes the average squared cosine similarity between all pairs of experts
+        selected in the top-k for each sample in the batch.
+
+        Args:
+            topk_indices: Tensor of shape (batch_size, top_k) containing expert indices
+
+        Returns:
+            Average squared cosine similarity between selected expert pairs
+
+        Memory optimization:
+        - Limits batch size to prevent OOM
+        - Pre-computes and caches expert norms
+        - Processes expert pairs without creating large intermediate tensors
+
+        """
         device = topk_indices.device
 
         if self.top_k <= 1:
@@ -160,57 +177,83 @@ class MoELoRALayer(nn.Module):
 
         batch_size = topk_indices.shape[0]
 
-        max_samples = 1000
+        # Limit samples to prevent OOM (256 samples should use ~500MB)
+        max_samples = 256
         if batch_size > max_samples:
             sample_indices = torch.randperm(batch_size, device=device)[:max_samples]
             topk_indices = topk_indices[sample_indices]
             batch_size = max_samples
 
-        A_stack = torch.stack(
-            [self.lora_A_experts[i] for i in range(self.num_experts)], dim=0
-        )
-        B_stack = torch.stack(
-            [self.lora_B_experts[i] for i in range(self.num_experts)], dim=0
-        )
+        # Cache expert norms if not already computed
+        if not hasattr(self, "_cached_expert_norms") or self._cached_expert_norms is None:
+            norms_squared = torch.zeros(self.num_experts, device=device)
 
-        num_experts = self.num_experts
+            for expert_idx in range(self.num_experts):
+                A_expert = self.lora_A_experts[expert_idx]
+                B_expert = self.lora_B_experts[expert_idx]
+                # ||W||_F^2 = Tr(A^T @ B^T @ B @ A)
+                BtB = torch.matmul(B_expert.transpose(0, 1), B_expert)
+                temp = torch.matmul(BtB, A_expert)
+                norms_squared[expert_idx] = torch.sum(A_expert * temp)
 
-        norms_squared = torch.zeros(num_experts, device=device)
+            self._cached_expert_norms = torch.sqrt(norms_squared + 1e-8)
 
-        for expert_idx in range(num_experts):
-            A_expert = A_stack[expert_idx]
-            B_expert = B_stack[expert_idx]
-            BtB = torch.matmul(B_expert.transpose(0, 1), B_expert)
-            temp = torch.matmul(BtB, A_expert)
-            norms_squared[expert_idx] = torch.sum(A_expert * temp)
+        norms = self._cached_expert_norms
 
-        norms = torch.sqrt(norms_squared + 1e-8)
-
+        # Compute similarities for unique expert pairs in this batch
         total_similarity = torch.tensor(0.0, device=device)
-        num_pairs = 0
+        num_comparisons = 0
 
+        # Get all unique expert pairs from topk_indices
         for i in range(self.top_k):
             for j in range(i + 1, self.top_k):
-                idx_i = topk_indices[:, i]
-                idx_j = topk_indices[:, j]
+                idx_i = topk_indices[:, i]  # (batch_size,)
+                idx_j = topk_indices[:, j]  # (batch_size,)
 
-                A_i = A_stack[idx_i]
-                B_i = B_stack[idx_i]
-                A_j = A_stack[idx_j]
-                B_j = B_stack[idx_j]
+                # Get unique pairs to avoid redundant computation
+                unique_pairs = torch.unique(torch.stack([idx_i, idx_j], dim=1), dim=0)
 
-                BiBj = torch.bmm(B_i.transpose(1, 2), B_j)
-                temp_j = torch.bmm(BiBj, A_j)
-                inner_product = torch.einsum("bik,bik->b", A_i, temp_j)
+                pair_similarities = []
 
-                norm_i = norms[idx_i]
-                norm_j = norms[idx_j]
-                cosine_sim = inner_product / (norm_i * norm_j + 1e-8)
-                squared_sim = cosine_sim**2
-                total_similarity = total_similarity + squared_sim.mean()
-                num_pairs += 1
+                # Compute similarity for each unique pair
+                for pair_idx in range(unique_pairs.shape[0]):
+                    expert_i = unique_pairs[pair_idx, 0].item()
+                    expert_j = unique_pairs[pair_idx, 1].item()
 
-        return total_similarity / num_pairs if num_pairs > 0 else total_similarity
+                    # Get expert matrices (no copying, just references)
+                    A_i = self.lora_A_experts[expert_i]
+                    B_i = self.lora_B_experts[expert_i]
+                    A_j = self.lora_A_experts[expert_j]
+                    B_j = self.lora_B_experts[expert_j]
+
+                    # Compute inner product: <W_i, W_j>_F = Tr(A_i^T @ B_i^T @ B_j @ A_j)
+                    with torch.no_grad():
+                        BiBj = torch.matmul(B_i.transpose(0, 1), B_j)
+                        temp = torch.matmul(BiBj, A_j)
+                        inner_product = torch.sum(A_i * temp)
+
+                    # Cosine similarity
+                    norm_i = norms[expert_i]
+                    norm_j = norms[expert_j]
+                    cosine_sim = inner_product / (norm_i * norm_j + 1e-8)
+
+                    # Count how many times this pair appears in the batch
+                    pair_count = ((idx_i == expert_i) & (idx_j == expert_j)).sum()
+
+                    # Add weighted contribution
+                    pair_similarities.append(cosine_sim**2 * pair_count)
+                    num_comparisons += pair_count.item()
+
+                # Accumulate similarities
+                if pair_similarities:
+                    total_similarity = (
+                        total_similarity + torch.stack(pair_similarities).sum()
+                    )
+
+        # Average over all comparisons
+        if num_comparisons > 0:
+            return total_similarity / num_comparisons
+        return total_similarity
 
     def compute_expert_outputs(self, x: Tensor) -> Tensor:
         """Compute outputs for all experts without routing.
