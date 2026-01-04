@@ -90,10 +90,99 @@ class BenchmarkEvaluator:
         dataset = cast("Dataset", load_dataset("hellaswag", split="validation"))
         return self._evaluate_dataset(dataset, "hellaswag")
 
+    def evaluate_piqa(self) -> float:
+        """Evaluate on PIQA dataset."""
+        logger.info("Evaluating PIQA...")
+        dataset = cast("Dataset", load_dataset("nthngdy/piqa", split="validation"))
+        return self._evaluate_dataset(dataset, "piqa")
+
+    def evaluate_swag(self) -> float:
+        """Evaluate on SWAG dataset."""
+        logger.info("Evaluating SWAG...")
+        dataset = cast("Dataset", load_dataset("allenai/swag", split="validation"))
+        return self._evaluate_dataset(dataset, "swag")
+
+    def evaluate_mbpp(self) -> float:
+        """Evaluate on MBPP dataset."""
+        logger.info("Evaluating MBPP...")
+        dataset = cast(
+            "Dataset", load_dataset("google-research-datasets/mbpp", split="full")
+        )
+        return self._evaluate_dataset(dataset, "mbpp")
+
+    def evaluate_storycloze(self) -> float:
+        """Evaluate on StoryCloze Test dataset."""
+        logger.info("Evaluating StoryCloze...")
+        dataset = cast("Dataset", load_dataset("lecslab/story_cloze", split="test"))
+        return self._evaluate_dataset(dataset, "storycloze")
+
+    def evaluate_axb(self) -> float:
+        """Evaluate on Broadcoverage Diagnostics (SuperGLUE) dataset."""
+        logger.info("Evaluating AXB...")
+        dataset = cast("Dataset", load_dataset("aps/super_glue", "axb", split="test"))
+        return self._evaluate_dataset(dataset, "axb")
+
+    def evaluate_axg(self) -> float:
+        """Evaluate on Winogender Schema Diagnostics (SuperGLUE) dataset."""
+        logger.info("Evaluating AXG...")
+        dataset = cast("Dataset", load_dataset("aps/super_glue", "axg", split="test"))
+        return self._evaluate_dataset(dataset, "axg")
+
+    def evaluate_cb(self) -> float:
+        """Evaluate on CommitmentBank (SuperGLUE) dataset."""
+        logger.info("Evaluating CB...")
+        dataset = cast("Dataset", load_dataset("aps/super_glue", "cb", split="validation"))
+        return self._evaluate_dataset(dataset, "cb")
+
+    def evaluate_copa(self) -> float:
+        """Evaluate on COPA (SuperGLUE) dataset."""
+        logger.info("Evaluating COPA...")
+        dataset = cast(
+            "Dataset", load_dataset("aps/super_glue", "copa", split="validation")
+        )
+        return self._evaluate_dataset(dataset, "copa")
+
+    def evaluate_multirc(self) -> float:
+        """Evaluate on MultiRC (SuperGLUE) dataset."""
+        logger.info("Evaluating MultiRC...")
+        dataset = cast(
+            "Dataset", load_dataset("aps/super_glue", "multirc", split="validation")
+        )
+        return self._evaluate_dataset(dataset, "multirc")
+
+    def evaluate_record(self) -> float:
+        """Evaluate on ReCoRD (SuperGLUE) dataset."""
+        logger.info("Evaluating ReCoRD...")
+        dataset = cast(
+            "Dataset", load_dataset("aps/super_glue", "record", split="validation")
+        )
+        return self._evaluate_dataset(dataset, "record")
+
+    def evaluate_rte(self) -> float:
+        """Evaluate on RTE (SuperGLUE) dataset."""
+        logger.info("Evaluating RTE...")
+        dataset = cast("Dataset", load_dataset("aps/super_glue", "rte", split="validation"))
+        return self._evaluate_dataset(dataset, "rte")
+
+    def evaluate_wic(self) -> float:
+        """Evaluate on WiC (SuperGLUE) dataset."""
+        logger.info("Evaluating WiC...")
+        dataset = cast("Dataset", load_dataset("aps/super_glue", "wic", split="validation"))
+        return self._evaluate_dataset(dataset, "wic")
+
+    def evaluate_wsc(self) -> float:
+        """Evaluate on WSC (SuperGLUE) dataset."""
+        logger.info("Evaluating WSC...")
+        dataset = cast(
+            "Dataset", load_dataset("aps/super_glue", "wsc.fixed", split="validation")
+        )
+        return self._evaluate_dataset(dataset, "wsc")
+
     def _evaluate_dataset(self, dataset: Dataset, dataset_name: str) -> float:
         """Evaluate dataset using batched masked token loss approach."""
         labels = []
         predictions = []
+        answer_sets = [] if dataset_name == "record" else None
 
         for start in tqdm(
             range(0, len(dataset), self.batch_size),
@@ -130,7 +219,16 @@ class BenchmarkEvaluator:
                     ctx_lens_per_option.extend([ctx_len] * len(options))
 
                     # Collect gold label
-                    labels.append(self._extract_target_index(row, dataset_name))
+                    if dataset_name == "record":
+                        # For ReCoRD, store the set of valid answer indices
+                        valid_indices = [
+                            i
+                            for i, entity in enumerate(row["entities"])
+                            if entity in row["answers"]
+                        ]
+                        answer_sets.append(set(valid_indices))
+                    else:
+                        labels.append(self._extract_target_index(row, dataset_name))
 
                 # Process in chunks to avoid OOM with MoE models
                 all_losses = []
@@ -241,8 +339,18 @@ class BenchmarkEvaluator:
                 raise
 
         # Calculate accuracy
-        correct = sum(1 for pred, label in zip(predictions, labels) if pred == label)
-        accuracy = correct / len(labels) if len(labels) > 0 else 0.0
+        if dataset_name == "record":
+            # For ReCoRD, check if predicted index is in the set of valid answers
+            correct = sum(
+                1
+                for pred, answer_set in zip(predictions, answer_sets)
+                if pred in answer_set
+            )
+            accuracy = correct / len(predictions) if len(predictions) > 0 else 0.0
+        else:
+            correct = sum(1 for pred, label in zip(predictions, labels) if pred == label)
+            accuracy = correct / len(labels) if len(labels) > 0 else 0.0
+
         logger.info(f"{dataset_name} Accuracy: {accuracy:.4f}")
         return accuracy
 
@@ -258,6 +366,81 @@ class BenchmarkEvaluator:
             return row["question_stem"]
         if dataset_name == "hellaswag":
             return row["ctx"]
+        # ==================== NEW DATASETS ====================
+        if dataset_name == "piqa":
+            return f"Given the goal: {row['goal']}"
+        if dataset_name == "swag":
+            return row["startphrase"]
+        if dataset_name == "storycloze":
+            return f"Given the text: {row['prompt']}"
+        if dataset_name == "axb":
+            return f"Sentence 1: {row['sentence1']}\nSentence 2: {row['sentence2']}\nDoes Sentence 1 entail Sentence 2?"
+        if dataset_name == "axg":
+            return f"Premise: {row['premise']}\nHypothesis: {row['hypothesis']}\nDoes the premise entail the hypothesis?"
+        if dataset_name == "cb":
+            return f"Premise: {row['premise']}\nHypothesis: {row['hypothesis']}\nDoes the premise entail the hypothesis?"
+        if dataset_name == "copa":
+            question_type = "cause" if row["question"] == "cause" else "effect"
+            return f"Premise: {row['premise']}\n\nQuestion: What is the {question_type}?\nChoice 1: {row['choice1']}\nChoice 2: {row['choice2']}"
+        if dataset_name == "multirc":
+            return f"According to the Passage: {row['paragraph']}\nIs this Answer: {row['answer']}\n correct for this Question: {row['question']}"
+        if dataset_name == "record":
+            return f'Given the passage: {row["passage"]}\n\nThe right choice for "@placeholder" in the query "{row["query"]}" is:'
+        if dataset_name == "rte":
+            return f"Premise: {row['premise']}\nHypothesis: {row['hypothesis']}\nDoes the premise entail the hypothesis?"
+        if dataset_name == "wic":
+            s1 = row["sentence1"]
+            s2 = row["sentence2"]
+            word = row["word"]
+            start1, end1 = row["start1"], row["end1"]
+            start2, end2 = row["start2"], row["end2"]
+
+            s1_marked = s1[:start1] + "*" + s1[start1:end1] + "*" + s1[end1:]
+            s2_marked = s2[:start2] + "*" + s2[start2:end2] + "*" + s2[end2:]
+
+            return f"Sentence 1: {s1_marked}\nSentence 2: {s2_marked}\n\nQuestion: Is the word *{word}* used in the same meaning in both sentences?"
+        if dataset_name == "wsc":
+            text = row["text"]
+            span1_text = row["span1_text"]
+            span2_text = row["span2_text"]
+            span1_idx = row["span1_index"]
+            span2_idx = row["span2_index"]
+
+            if span2_idx > span1_idx:
+                marked_text = (
+                    text[:span2_idx]
+                    + "["
+                    + span2_text
+                    + "]"
+                    + text[span2_idx + len(span2_text) :]
+                )
+                marked_text = (
+                    marked_text[:span1_idx]
+                    + "*"
+                    + span1_text
+                    + "*"
+                    + marked_text[span1_idx + len(span1_text) :]
+                )
+            else:
+                marked_text = (
+                    text[:span1_idx]
+                    + "*"
+                    + span1_text
+                    + "*"
+                    + text[span1_idx + len(span1_text) :]
+                )
+                offset = len(span1_text) + 2
+                new_span2_idx = span2_idx if span2_idx < span1_idx else span2_idx + offset
+                marked_text = (
+                    marked_text[:new_span2_idx]
+                    + "["
+                    + span2_text
+                    + "]"
+                    + marked_text[new_span2_idx + len(span2_text) :]
+                )
+
+            return f"Text: {marked_text}\n\nQuestion: Does the pronoun/reference [{span2_text}] refer to *{span1_text}*?"
+        # ======================================================
         raise ValueError(f"Unknown dataset: {dataset_name}")
 
     def _get_verbalizer_choices(self, row, dataset_name: str) -> list[str] | None:
@@ -269,11 +452,68 @@ class BenchmarkEvaluator:
                 f"{row['option1']} is the right choice for the placeholder _",
                 f"{row['option2']} is the right choice for the placeholder _",
             ]
-        if dataset_name in ["arc-challenge", "arc-easy"] or dataset_name == "openbookqa":
+        if dataset_name in ["arc-challenge", "arc-easy"]:
+            return [f"The right answer is: {choice}" for choice in row["choices"]["text"]]
+        if dataset_name == "openbookqa":
             return [f"The right answer is: {choice}" for choice in row["choices"]["text"]]
         if dataset_name == "hellaswag":
             return [f"{ending} is the correct continuation." for ending in row["endings"]]
-
+        # ==================== NEW DATASETS ====================
+        if dataset_name == "piqa":
+            return [
+                f"The proper solution to reach it is: {row['sol1']}",
+                f"The proper solution to reach it is: {row['sol2']}",
+            ]
+        if dataset_name == "swag":
+            return [row["ending0"], row["ending1"], row["ending2"], row["ending3"]]
+        if dataset_name == "storycloze":
+            return [
+                f"{row['chosen']} is the coherent and suitable ending.",
+                f"{row['rejected']} is the coherent and suitable ending.",
+            ]
+        if dataset_name == "axb":
+            return [
+                "Yes, the first sentence entails the second.",
+                "No, the first sentence does not entail the second.",
+            ]
+        if dataset_name == "axg":
+            return [
+                "Yes, the premise entails the hypothesis.",
+                "No, the premise does not entail the hypothesis.",
+            ]
+        if dataset_name == "cb":
+            return [
+                "Yes, the hypothesis is definitely true given the premise.",
+                "No, the hypothesis contradicts the premise.",
+                "It's unclear whether the hypothesis is true or false.",
+            ]
+        if dataset_name == "copa":
+            question_type = "cause" if row["question"] == "cause" else "effect"
+            return [
+                f"Choice 1 is the correct {question_type}.",
+                f"Choice 2 is the correct {question_type}.",
+            ]
+        if dataset_name == "multirc":
+            return [
+                "No, this answer is incorrect for the given question and passage.",
+                "Yes, this answer is correct for the given question and passage.",
+            ]
+        if dataset_name == "record":
+            return [entity for entity in row["entities"]]
+        if dataset_name == "rte":
+            return [
+                "Yes, the premise entails the hypothesis.",
+                "No, the premise does not entail the hypothesis.",
+            ]
+        if dataset_name == "wic":
+            word = row["word"]
+            return [
+                f"No. The word *{word}* has a different meaning in sentence 1 and sentence 2.",
+                f"Yes. The word *{word}* has the same meaning in sentence 1 and sentence 2.",
+            ]
+        if dataset_name == "wsc":
+            return ["No.", "Yes."]
+        # ======================================================
         return None
 
     def _create_multi_choice_options(self, row, dataset_name: str) -> list[str]:
@@ -307,20 +547,14 @@ class BenchmarkEvaluator:
         if dataset_name in ["arc-challenge", "arc-easy"]:
             return row["choices"]["label"].index(row["answerKey"])
         if dataset_name == "winogrande":
-            # Winogrande uses "answer" field with values "1" or "2"
             answer = row["answer"]
-            # Handle both string and int types
             if isinstance(answer, str):
                 return int(answer) - 1
             return answer - 1
         if dataset_name == "boolq":
-            # BoolQ standard dataset uses 'answer' (boolean) not 'label'
-            # True -> index 0 ("Yes, that is true.")
-            # False -> index 1 ("No, that is false.")
             if "answer" in row:
                 return 0 if row["answer"] else 1
             if "label" in row:
-                # Fallback for SuperGLUE version
                 return 0 if row["label"] else 1
             raise KeyError(
                 f"BoolQ row has neither 'answer' nor 'label' field. Available fields: {list(row.keys())}"
@@ -329,10 +563,39 @@ class BenchmarkEvaluator:
             return row["choices"]["label"].index(row["answerKey"])
         if dataset_name == "hellaswag":
             label = row["label"]
-            # Handle both string and int types
             if isinstance(label, str):
                 return int(label)
             return label
+        # ==================== NEW DATASETS ====================
+        if dataset_name == "piqa":
+            return int(row["label"])
+        if dataset_name == "swag":
+            return int(row["label"])
+        if dataset_name == "storycloze":
+            return 0  # 'chosen' is always the correct answer
+        if dataset_name == "axb":
+            return row["label"]
+        if dataset_name == "axg":
+            return row["label"]
+        if dataset_name == "cb":
+            return int(row["label"])
+        if dataset_name == "copa":
+            return int(row["label"])
+        if dataset_name == "multirc":
+            return row["label"]
+        if dataset_name == "record":
+            # Find index of correct entity from answers list
+            for answer in row["answers"]:
+                if answer in row["entities"]:
+                    return row["entities"].index(answer)
+            return 0  # Fallback
+        if dataset_name == "rte":
+            return int(row["label"])
+        if dataset_name == "wic":
+            return row["label"]
+        if dataset_name == "wsc":
+            return row["label"]
+        # ======================================================
         raise ValueError(f"Unknown dataset: {dataset_name}")
 
     def _compute_loglike_loss(
@@ -367,12 +630,71 @@ class BenchmarkEvaluator:
     def run_all_benchmarks(self) -> dict[str, float]:
         """Run all benchmark evaluations."""
         results = {
+            # Original benchmarks
             "ARC-Challenge": self.evaluate_arc_challenge(),
             "ARC-Easy": self.evaluate_arc_easy(),
             "Winogrande": self.evaluate_winogrande(),
             "BoolQ": self.evaluate_boolq(),
             "OpenBookQA": self.evaluate_openbookqa(),
             "HellaSwag": self.evaluate_hellaswag(),
+            # New benchmarks
+            "PIQA": self.evaluate_piqa(),
+            "SWAG": self.evaluate_swag(),
+            "MBPP": self.evaluate_mbpp(),
+            "StoryCloze": self.evaluate_storycloze(),
+            "AXB": self.evaluate_axb(),
+            "AXG": self.evaluate_axg(),
+            "CB": self.evaluate_cb(),
+            "COPA": self.evaluate_copa(),
+            "MultiRC": self.evaluate_multirc(),
+            "ReCoRD": self.evaluate_record(),
+            "RTE": self.evaluate_rte(),
+            "WiC": self.evaluate_wic(),
+            "WSC": self.evaluate_wsc(),
         }
         results["Average"] = sum(results.values()) / len(results)
+        return results
+
+    def run_selected_benchmarks(self, benchmark_names: list[str]) -> dict[str, float]:
+        """Run selected benchmark evaluations.
+
+        Args:
+            benchmark_names: List of benchmark names to run (e.g., ["arc-challenge", "boolq"])
+
+        Returns:
+            Dictionary mapping benchmark names to accuracy scores
+
+        """
+        benchmark_map = {
+            "arc-challenge": self.evaluate_arc_challenge,
+            "arc-easy": self.evaluate_arc_easy,
+            "winogrande": self.evaluate_winogrande,
+            "boolq": self.evaluate_boolq,
+            "openbookqa": self.evaluate_openbookqa,
+            "hellaswag": self.evaluate_hellaswag,
+            "piqa": self.evaluate_piqa,
+            "swag": self.evaluate_swag,
+            "mbpp": self.evaluate_mbpp,
+            "storycloze": self.evaluate_storycloze,
+            "axb": self.evaluate_axb,
+            "axg": self.evaluate_axg,
+            "cb": self.evaluate_cb,
+            "copa": self.evaluate_copa,
+            "multirc": self.evaluate_multirc,
+            "record": self.evaluate_record,
+            "rte": self.evaluate_rte,
+            "wic": self.evaluate_wic,
+            "wsc": self.evaluate_wsc,
+        }
+
+        results = {}
+        for name in benchmark_names:
+            if name in benchmark_map:
+                results[name] = benchmark_map[name]()
+            else:
+                logger.warning(f"Unknown benchmark: {name}")
+
+        if results:
+            results["Average"] = sum(results.values()) / len(results)
+
         return results

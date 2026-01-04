@@ -382,6 +382,7 @@ class MoELoRAModel(nn.Module):
         Returns:
             Total diversity loss (similarity measure) across all layers.
             Lower values indicate more diverse experts.
+
         """
         model_params = list(self.parameters())
         if not model_params:
@@ -417,7 +418,7 @@ class MoELoRAModel(nn.Module):
                 - 'pes_per_layer': Dictionary mapping layer names to their PES values
 
         Note:
-            This requires that forward() was called to store expert outputs. 
+            This requires that forward() was called to store expert outputs.
             The metric considers all experts, not just top-k selected ones.
 
         """
