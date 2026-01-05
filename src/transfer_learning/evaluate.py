@@ -102,14 +102,6 @@ class BenchmarkEvaluator:
         dataset = cast("Dataset", load_dataset("allenai/swag", split="validation"))
         return self._evaluate_dataset(dataset, "swag")
 
-    def evaluate_mbpp(self) -> float:
-        """Evaluate on MBPP dataset."""
-        logger.info("Evaluating MBPP...")
-        dataset = cast(
-            "Dataset", load_dataset("google-research-datasets/mbpp", split="full")
-        )
-        return self._evaluate_dataset(dataset, "mbpp")
-
     def evaluate_storycloze(self) -> float:
         """Evaluate on StoryCloze Test dataset."""
         logger.info("Evaluating StoryCloze...")
@@ -177,6 +169,8 @@ class BenchmarkEvaluator:
             "Dataset", load_dataset("aps/super_glue", "wsc.fixed", split="validation")
         )
         return self._evaluate_dataset(dataset, "wsc")
+
+    # ======================================================
 
     def _evaluate_dataset(self, dataset: Dataset, dataset_name: str) -> float:
         """Evaluate dataset using batched masked token loss approach."""
@@ -366,7 +360,6 @@ class BenchmarkEvaluator:
             return row["question_stem"]
         if dataset_name == "hellaswag":
             return row["ctx"]
-        # ==================== NEW DATASETS ====================
         if dataset_name == "piqa":
             return f"Given the goal: {row['goal']}"
         if dataset_name == "swag":
@@ -458,7 +451,6 @@ class BenchmarkEvaluator:
             return [f"The right answer is: {choice}" for choice in row["choices"]["text"]]
         if dataset_name == "hellaswag":
             return [f"{ending} is the correct continuation." for ending in row["endings"]]
-        # ==================== NEW DATASETS ====================
         if dataset_name == "piqa":
             return [
                 f"The proper solution to reach it is: {row['sol1']}",
@@ -566,7 +558,6 @@ class BenchmarkEvaluator:
             if isinstance(label, str):
                 return int(label)
             return label
-        # ==================== NEW DATASETS ====================
         if dataset_name == "piqa":
             return int(row["label"])
         if dataset_name == "swag":
@@ -630,17 +621,14 @@ class BenchmarkEvaluator:
     def run_all_benchmarks(self) -> dict[str, float]:
         """Run all benchmark evaluations."""
         results = {
-            # Original benchmarks
             "ARC-Challenge": self.evaluate_arc_challenge(),
             "ARC-Easy": self.evaluate_arc_easy(),
             "Winogrande": self.evaluate_winogrande(),
             "BoolQ": self.evaluate_boolq(),
             "OpenBookQA": self.evaluate_openbookqa(),
             "HellaSwag": self.evaluate_hellaswag(),
-            # New benchmarks
             "PIQA": self.evaluate_piqa(),
             "SWAG": self.evaluate_swag(),
-            "MBPP": self.evaluate_mbpp(),
             "StoryCloze": self.evaluate_storycloze(),
             "AXB": self.evaluate_axb(),
             "AXG": self.evaluate_axg(),
@@ -674,7 +662,6 @@ class BenchmarkEvaluator:
             "hellaswag": self.evaluate_hellaswag,
             "piqa": self.evaluate_piqa,
             "swag": self.evaluate_swag,
-            "mbpp": self.evaluate_mbpp,
             "storycloze": self.evaluate_storycloze,
             "axb": self.evaluate_axb,
             "axg": self.evaluate_axg,
