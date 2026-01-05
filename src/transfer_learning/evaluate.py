@@ -44,7 +44,7 @@ class BenchmarkEvaluator:
         elif self.is_moe_model:
             # MoE models need very small chunks due to expert computation memory
             # With 4 sequences, expert_outputs tensor is ~500MB instead of 2GB+
-            self.max_options_per_forward = 4
+            self.max_options_per_forward = 32
             logger.info(
                 f"Detected MoE model - using max_options_per_forward={self.max_options_per_forward} to prevent OOM"
             )
