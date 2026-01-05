@@ -193,8 +193,7 @@ def main():
             moe_model,
             tokenizer,
             args.device,
-            batch_size=args.batch_size,  # Process 1 question at a time
-            max_options_per_forward=4,  # Max 4 sequences per forward pass
+            batch_size=args.batch_size,
         )
         all_results["moe"] = moe_evaluator.run_all_benchmarks()
         del moe_model
