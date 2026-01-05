@@ -189,7 +189,6 @@ def main():
         logger.info("=" * 50)
         moe_model = load_moe_model(args.model_name, args.moe_checkpoint, args.device)
 
-
         moe_evaluator = BenchmarkEvaluator(
             moe_model,
             tokenizer,

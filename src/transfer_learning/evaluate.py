@@ -39,18 +39,17 @@ class BenchmarkEvaluator:
 
         self.is_moe_model = isinstance(self.model, MoELoRAModel)
 
+        # Use the same max_options_per_forward for all models (MoE and regular)
         if max_options_per_forward is not None:
             self.max_options_per_forward = max_options_per_forward
-        elif self.is_moe_model:
-            # MoE models need very small chunks due to expert computation memory
-            # With 4 sequences, expert_outputs tensor is ~500MB instead of 2GB+
-            self.max_options_per_forward = 64
-            logger.info(
-                f"Detected MoE model - using max_options_per_forward={self.max_options_per_forward} to prevent OOM"
-            )
         else:
-            # Regular models can handle larger batches
+            # Default to 64 for all models - no special treatment for MoE
             self.max_options_per_forward = 64
+
+        logger.info(
+            f"{'MoE' if self.is_moe_model else 'Regular'} model detected - "
+            f"using batch_size={self.batch_size}, max_options_per_forward={self.max_options_per_forward}"
+        )
 
     def evaluate_arc_challenge(self) -> float:
         """Evaluate on ARC-Challenge dataset."""
@@ -306,12 +305,10 @@ class BenchmarkEvaluator:
                             chunk_losses = torch.cat(single_losses, dim=0)
                             all_losses.append(chunk_losses)
 
-                    # Clear GPU cache after each chunk for MoE models
-                    if self.is_moe_model:
-                        del tokenized, masked_labels
-                        if "logits" in locals():
-                            del logits
-                        torch.cuda.empty_cache()
+                    # Minimal cleanup - removed special MoE handling
+                    del tokenized, masked_labels
+                    if "logits" in locals():
+                        del logits
 
                 # Concatenate all losses
                 losses = torch.cat(all_losses, dim=0)
