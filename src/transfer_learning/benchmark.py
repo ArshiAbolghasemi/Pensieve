@@ -189,19 +189,12 @@ def main():
         logger.info("=" * 50)
         moe_model = load_moe_model(args.model_name, args.moe_checkpoint, args.device)
 
-        # Use very small batch size for MoE to avoid OOM
-        # Process 1 question at a time (1 question × 4 options = 4 sequences max)
-        moe_batch_size = 1
-        logger.info(f"Using batch_size={moe_batch_size} for MoE model to prevent OOM")
-        logger.info(
-            "This will process 1 question at a time with max 4 sequences per forward pass"
-        )
 
         moe_evaluator = BenchmarkEvaluator(
             moe_model,
             tokenizer,
             args.device,
-            batch_size=moe_batch_size,  # Process 1 question at a time
+            batch_size=args.batch_size,  # Process 1 question at a time
             max_options_per_forward=4,  # Max 4 sequences per forward pass
         )
         all_results["moe"] = moe_evaluator.run_all_benchmarks()
