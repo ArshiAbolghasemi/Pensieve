@@ -94,35 +94,57 @@ def load_moe_model(
 
 
 def print_results_table(results_dict: dict[str, dict[str, float]]):
-    """Print results in a formatted table."""
-    datasets = [
-        "ARC-Challenge",
-        "ARC-Easy",
-        "Winogrande",
-        "BoolQ",
-        "OpenBookQA",
-        "HellaSwag",
-    ]
+    """Print results in a formatted table.
 
-    print("\n" + "=" * 90)
-    print("| Dataset      | Base Acc. | Single LoRA Acc. | MoE Acc. |")
-    print("|--------------|-----------|------------------|----------|")
+    Args:
+        results_dict: Dictionary with model types as keys ("base", "lora", "moe")
+                     and their results dictionaries as values.
+                     Each results dictionary has dataset names as keys and accuracy as values.
 
-    for dataset in datasets:
+    Example:
+        results_dict = {
+            "base": {"ARC-Challenge": 0.45, "BoolQ": 0.81, "Average": 0.63},
+            "lora": {"ARC-Challenge": 0.48, "BoolQ": 0.75, "Average": 0.62},
+            "moe": {"ARC-Challenge": 0.55, "BoolQ": 0.80, "Average": 0.68},
+        }
+
+    """
+    all_datasets = set()
+    for model_results in results_dict.values():
+        all_datasets.update(key for key in model_results.keys() if key != "Average")
+
+    available_datasets = sorted(all_datasets)
+
+    if not available_datasets:
+        print("No datasets found in results!")
+        return
+
+    max_dataset_len = max(len(dataset) for dataset in available_datasets)
+    dataset_col_width = max(max_dataset_len, 12)
+
+    separator_width = dataset_col_width + 3 + 11 + 18 + 10 + 6  # columns + separators
+
+    print("\n" + "=" * separator_width)
+    print(f"| {'Dataset':<{dataset_col_width}} | Base Acc. | Single LoRA Acc. | MoE Acc. |")
+    print(f"|{'-' * dataset_col_width}--|-----------|------------------|----------|")
+
+    for dataset in available_datasets:
         base_acc = results_dict.get("base", {}).get(dataset, 0.0)
         lora_acc = results_dict.get("lora", {}).get(dataset, 0.0)
         moe_acc = results_dict.get("moe", {}).get(dataset, 0.0)
+        print(
+            f"| {dataset:<{dataset_col_width}} | {base_acc:9.4f} | {lora_acc:16.4f} | {moe_acc:9.4f} |"
+        )
 
-        print(f"| {dataset:12} | {base_acc:9.4f} | {lora_acc:16.4f} | {moe_acc:9.4f} |")
-
-    print("|" + "-" * 88 + "|")
+    print(f"|{'-' * (separator_width - 2)}|")
 
     base_avg = results_dict.get("base", {}).get("Average", 0.0)
     lora_avg = results_dict.get("lora", {}).get("Average", 0.0)
     moe_avg = results_dict.get("moe", {}).get("Average", 0.0)
-
-    print(f"| {'Average':12} | {base_avg:9.4f} | {lora_avg:16.4f} | {moe_avg:9.4f} |")
-    print("=" * 90)
+    print(
+        f"| {'Average':<{dataset_col_width}} | {base_avg:9.4f} | {lora_avg:16.4f} | {moe_avg:9.4f} |"
+    )
+    print("=" * separator_width)
 
 
 def main():
