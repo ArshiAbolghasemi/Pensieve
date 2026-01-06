@@ -1,10 +1,10 @@
-from typing import Literal
-
+from typing import Literal, Optional, Union
 from peft import LoraConfig
 
 
 class MoLELoRAConfig(LoraConfig):
-    """Configuration class for Mixture of Experts LoRA.
+    """
+    Configuration class for Mixture of Experts LoRA.
 
     Inherits from PEFT's LoraConfig and adds MoE-specific parameters.
 
@@ -19,7 +19,6 @@ class MoLELoRAConfig(LoraConfig):
         router_init (str): Initialization method for router
             Options: "random", "orthogonal", "svd"
         target_modules (Union[list[str], str]): Modules to apply MoE LoRA to
-
     """
 
     def __init__(
@@ -33,7 +32,7 @@ class MoLELoRAConfig(LoraConfig):
             "random", "pissa", "goat", "milora", "goat_mini", "pissa_milora"
         ] = "random",
         router_init: Literal["random", "orthogonal", "svd"] = "random",
-        target_modules: list[str] | str | None = None,
+        target_modules: Optional[Union[list[str], str]] = None,
         **kwargs,
     ):
         _ = kwargs
