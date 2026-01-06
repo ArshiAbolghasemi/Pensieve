@@ -23,10 +23,10 @@ class MoELoRAModel(PeftModel):
         peft_config: MoLELoRAConfig,
         adapter_name: str = "default",
     ) -> None:
+        super().__init__(model, cast("PeftConfig", {}), adapter_name)
+
         self.moe_config = peft_config
         self.moe_layers: nn.ModuleDict = nn.ModuleDict()
-
-        super().__init__(model, cast("PeftConfig", {}), adapter_name)
 
         logger.info("Starting MoE layer injection")
         self._inject_moe_layers()
