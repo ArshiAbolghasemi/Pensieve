@@ -1,4 +1,5 @@
 import logging
+import random
 
 import torch
 from torch import Tensor
@@ -117,6 +118,7 @@ def validate(
     moe_model: MoELoRAModel,
     val_dataloader: DataLoader,
     device: str = "cuda",
+    pes_prob: float = 0.05,
 ) -> float:
     """Validate the model and return average loss."""
     moe_model.eval()
@@ -141,13 +143,15 @@ def validate(
             total_loss += loss.item()
             num_batches += 1
 
-            pes_results = moe_model.compute_pairwise_expert_similarity()
+            pes_value = None
+            if random.random() < pes_prob:
+                pes_results = moe_model.compute_pairwise_expert_similarity()
+                pes_value = pes_results["pes_model"]
 
-            progress_bar.set_postfix(
-                {
-                    "loss": f"{loss.item():.4f}",
-                    "pes": f"{pes_results['pes_model']:.4f}",
-                }
-            )
+            postfix = {"loss": f"{loss.item():.4f}"}
+            if pes_value is not None:
+                postfix["pes"] = f"{pes_value:.4f}"
+
+            progress_bar.set_postfix(postfix)
 
     return total_loss / num_batches

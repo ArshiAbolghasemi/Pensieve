@@ -79,7 +79,7 @@ class MoELoRALayer(nn.Module):
 
     @property
     def bias(self):
-        return self.base_layer.bias if hasattr(self.base_layer, 'bias') else None
+        return self.base_layer.bias if hasattr(self.base_layer, "bias") else None
 
     def _initialize_router(self) -> nn.Linear:
         """Initialize the router network.
