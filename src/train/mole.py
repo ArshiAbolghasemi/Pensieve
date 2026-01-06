@@ -67,25 +67,32 @@ def main():
     )
 
     logger.info("Loading base model...")
-    model = get_model(
+    base_model = get_model(
         model_name=training_config.model_name,
         load_in_4bit=training_config.load_in_4bit,
         torch_dtype=torch.bfloat16,
         use_flash_attention=training_config.use_flash_attention,
     )
 
+    # Create dataloaders
     train_dataloader, val_dataloader = create_dataloaders(
         tokenizer=tokenizer,
         config=training_config,
     )
 
-    logger.info("Injecting MoE LoRA layers...")
-    moe_model = MoELoRAModel(model, moe_config)
+    logger.info("Creating MoE LoRA model...")
+    moe_model = MoELoRAModel(
+        model=base_model,
+        peft_config=moe_config,
+        adapter_name=f"{args.adapter_init}_{args.router_init}",
+    )
     moe_model.print_trainable_parameters()
 
-    for param in model.parameters():
+    logger.info("Freezing base model parameters...")
+    for param in base_model.parameters():
         param.requires_grad = False
 
+    logger.info("Enabling MoE parameters for training...")
     for param in moe_model.get_trainable_parameters():
         param.requires_grad = True
 
@@ -138,12 +145,14 @@ def main():
 
         if val_loss < best_val_loss:
             best_val_loss = val_loss
+
             checkpoint_path = output_path.joinpath(
                 f"{args.adapter_init}_{args.router_init}_{args.top_k}"
             )
             checkpoint_path.mkdir(exist_ok=True)
 
-            moe_model.save_pretrained(checkpoint_path)
+            logger.info(f"Saving model to {checkpoint_path}...")
+            moe_model.save_pretrained(str(checkpoint_path))
             tokenizer.save_pretrained(checkpoint_path)
 
             torch.save(
@@ -160,8 +169,11 @@ def main():
 
             logger.info(f"Saved best model to {checkpoint_path}")
 
+    logger.info("=" * 80)
     logger.info("Training completed!")
     logger.info(f"Best validation loss: {best_val_loss:.4f}")
+    logger.info(f"Model saved to: {output_path}")
+    logger.info("=" * 80)
 
 
 if __name__ == "__main__":

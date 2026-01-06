@@ -19,7 +19,7 @@ def train_epoch(
     gradient_accumulation_steps: int = 1,
     max_grad_norm: float = 1.0,
     logging_steps: int = 10,
-    diversity_loss_weight: float = 0.01,  # FIXED: Use positive weight
+    diversity_loss_weight: float = 0.01,
     device: str = "cuda",
     epoch: int = 0,
     num_epochs: int = 1,
