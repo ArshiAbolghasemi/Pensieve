@@ -48,7 +48,7 @@ class MoELoRAModel(PeftModel):
             adapter_name: Adapter identifier
 
         """
-        super().__init__(model, cast("PeftConfig", {}), adapter_name)
+        super().__init__(model, MoLELoRAConfig, adapter_name)
 
         self.moe_config = peft_config
         self.moe_layers: nn.ModuleDict = nn.ModuleDict()
@@ -360,25 +360,6 @@ class MoELoRAModel(PeftModel):
         Raises:
             FileNotFoundError: If moe_adapter.pt not found
             KeyError: If config not found in checkpoint
-
-        Example:
-            >>> from transformers import AutoModelForCausalLM
-            >>> base_model = AutoModelForCausalLM.from_pretrained("microsoft/Phi-3-mini-4k-instruct")
-            >>>
-            >>> # Load for inference
-            >>> moe_model = MoELoRAModel.from_pretrained(
-            ...     model=base_model,
-            ...     model_id="path/to/checkpoint",
-            ...     is_trainable=False
-            ... )
-            >>>
-            >>> # Load for continued training
-            >>> moe_model = MoELoRAModel.from_pretrained(
-            ...     model=base_model,
-            ...     model_id="path/to/checkpoint",
-            ...     is_trainable=True
-            ... )
-
         """
         # Suppress unused parameter warnings (PEFT compatibility)
         _ = (
