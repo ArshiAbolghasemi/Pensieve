@@ -48,7 +48,7 @@ class MoELoRAModel(PeftModel):
             adapter_name: Adapter identifier
 
         """
-        super().__init__(model, MoLELoRAConfig, adapter_name)
+        super().__init__(model, peft_config, adapter_name)
 
         self.moe_config = peft_config
         self.moe_layers: nn.ModuleDict = nn.ModuleDict()
