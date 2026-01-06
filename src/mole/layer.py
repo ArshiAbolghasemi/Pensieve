@@ -73,6 +73,14 @@ class MoELoRALayer(nn.Module):
             nn.Dropout(p=self.lora_dropout) if self.lora_dropout > 0 else nn.Identity()
         )
 
+    @property
+    def weight(self):
+        return self.base_layer.weight
+
+    @property
+    def bias(self):
+        return self.base_layer.bias if hasattr(self.base_layer, 'bias') else None
+
     def _initialize_router(self) -> nn.Linear:
         """Initialize the router network.
 
