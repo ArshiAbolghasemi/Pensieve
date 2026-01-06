@@ -78,7 +78,7 @@ def get_train_args_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--diversity_loss_coefficient",
         type=float,
-        default=-0.01,
+        default=0.01,
         help="coefficient for diversity loss",
     )
 
