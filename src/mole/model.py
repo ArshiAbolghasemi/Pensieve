@@ -34,6 +34,8 @@ class MoELoRAModel(PeftModel):
             adapter_name: Adapter identifier
 
         """
+        super().__init__(model, peft_config, adapter_name)
+
         nn.Module.__init__(self)
 
         self.base_model = model
