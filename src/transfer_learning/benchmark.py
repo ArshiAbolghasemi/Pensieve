@@ -1,5 +1,4 @@
 import logging
-from pathlib import Path
 
 import torch
 from peft import PeftModel
@@ -61,9 +60,13 @@ def load_moe_model(
     checkpoint_path: str,
     device: str,
 ) -> MoELoRAModel:
-    """Load MoE model from checkpoint."""
+    """Load MoE model from checkpoint.
+
+    FIXED: Uses the proper from_pretrained method instead of manual loading.
+    """
     logger.info(f"Loading MoE model from: {checkpoint_path}")
 
+    # Load base model
     base_model = get_model(
         model_name=model_name,
         load_in_4bit=True,
@@ -75,21 +78,15 @@ def load_moe_model(
     if hasattr(base_model, "config"):
         base_model.config.use_cache = False
 
-    checkpoint = torch.load(
-        Path(checkpoint_path) / "moe_adapter.pt", map_location=device, weights_only=False
+    # FIXED: Use the proper from_pretrained class method
+    moe_model = MoELoRAModel.from_pretrained(
+        model=base_model,
+        model_id=checkpoint_path,
+        adapter_name="default",
+        is_trainable=False,  # Frozen for evaluation
     )
-    moe_config = checkpoint["config"]
 
-    moe_model = MoELoRAModel(base_model, moe_config)
-
-    for layer_name, state_dict in checkpoint["moe_layers"].items():
-        if layer_name in moe_model.moe_layers:
-            adapter_state = {
-                k: v for k, v in state_dict.items() if not k.startswith("base_layer.")
-            }
-            moe_model.moe_layers[layer_name].load_state_dict(adapter_state, strict=False)
-            logger.info(f"Loaded MoE layer: {layer_name}")
-
+    logger.info("MoE model loaded successfully")
     return moe_model.to(device)
 
 
@@ -100,14 +97,6 @@ def print_results_table(results_dict: dict[str, dict[str, float]]):
         results_dict: Dictionary with model types as keys ("base", "lora", "moe")
                      and their results dictionaries as values.
                      Each results dictionary has dataset names as keys and accuracy as values.
-
-    Example:
-        results_dict = {
-            "base": {"ARC-Challenge": 0.45, "BoolQ": 0.81, "Average": 0.63},
-            "lora": {"ARC-Challenge": 0.48, "BoolQ": 0.75, "Average": 0.62},
-            "moe": {"ARC-Challenge": 0.55, "BoolQ": 0.80, "Average": 0.68},
-        }
-
     """
     all_datasets = set()
     for model_results in results_dict.values():
@@ -155,6 +144,7 @@ def main():
 
     all_results = {}
 
+    # Evaluate base model
     if not args.skip_base:
         logger.info("\n" + "=" * 50)
         logger.info("EVALUATING BASE MODEL")
@@ -169,6 +159,7 @@ def main():
     else:
         logger.info("Skipping base model evaluation")
 
+    # Evaluate LoRA model
     if not args.skip_lora:
         logger.info("\n" + "=" * 50)
         logger.info("EVALUATING SINGLE LORA MODEL")
@@ -183,6 +174,7 @@ def main():
     else:
         logger.info("Skipping LoRA model evaluation")
 
+    # Evaluate MoE model
     if not args.skip_moe:
         logger.info("\n" + "=" * 50)
         logger.info("EVALUATING MOE MODEL")
@@ -201,6 +193,7 @@ def main():
     else:
         logger.info("Skipping MoE model evaluation")
 
+    # Print final results
     print_results_table(all_results)
 
 
